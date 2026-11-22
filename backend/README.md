@@ -61,6 +61,38 @@ node backend/server.mjs
 
 미션 주행은 미션의 사용자 소유권을 서버에서 검증할 수 있을 때 연결합니다.
 
+## 초기 체력 측정
+
+`GET /assessment`는 인증된 사용자의 초기 측정 진행률을 반환합니다. 초기 측정으로 저장한 주행(`type: "assessment"`) 중 3,000m 이상인 기록만 집계합니다. 동일 러닝의 재전송은 한 번만 집계합니다.
+
+```json
+{
+  "completedRuns": 2,
+  "requiredRuns": 3,
+  "status": "in_progress",
+  "baselinePaceSecondsPerKm": null
+}
+```
+
+세 번째 유효 기록이 저장되면 `status`는 `completed`입니다. 기준 페이스는 서버에 저장된 순서로 첫 세 유효 기록의 총 이동 시간(초)을 총 거리(km)로 나눈 뒤 정수로 반올림합니다. 네 번째 이후 주행은 최초 기준 페이스에 영향을 주지 않습니다.
+
+## 활성 목표
+
+`GET /goals/active`는 `200`과 `{"goal":null}` 또는 현재 활성 목표를 반환합니다. 초기 측정 중에도 목표를 설정할 수 있습니다.
+
+`PUT /goals/active`는 JSON 요청으로 사용자당 목표 하나를 생성하거나 교체합니다.
+
+| 목표 | 요청 예시 | 단위 |
+| --- | --- | --- |
+| 거리 | `{"type":"distance","targetDistanceMeters":5000}` | 미터 |
+| 페이스 | `{"type":"pace","targetPaceSecondsPerKm":390}` | 초/km, 값이 작을수록 빠름 |
+
+목표값은 양의 안전한 정수이며 요청에는 `type`과 해당 유형의 목표 필드만 포함합니다. 성공하면 `200`과 `{"goal":{"type":"distance","targetDistanceMeters":5000}}` 형식으로 응답합니다. 잘못된 목표나 JSON에는 `400 invalid_goal`을 반환합니다. 업로드 API와 같은 Bearer 인증을 사용하며, 인증 실패 시 `401 unauthorized`입니다. JSON 요청의 헤더와 최대 크기 조건은 업로드 API와 같습니다.
+
+## 미션 로직 연동
+
+미션 추천에 사용할 입력은 초기 측정의 `status`, `baselinePaceSecondsPerKm`와 현재 활성 목표입니다. 추천 가능 조건은 측정 완료와 활성 목표 설정입니다. 향후 서버 내부에서도 `summarizeAssessment`와 저장소의 `getActiveGoal`을 사용해 같은 입력을 얻을 수 있습니다.
+
 ## 테스트
 
 저장소 루트에서 `node --test backend/server.test.mjs`를 실행합니다.
