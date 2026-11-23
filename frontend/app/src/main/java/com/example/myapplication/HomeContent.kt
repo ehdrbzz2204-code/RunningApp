@@ -34,20 +34,20 @@ import androidx.compose.ui.unit.*
         Column(Modifier.fillMaxWidth().padding(18.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                 Box(Modifier.background(Ink.copy(alpha=.07f),CircleShape).padding(horizontal=9.dp,vertical=4.dp)){Label("초기 체력 측정 중",11,true)}
-                Label("2 / 3",13,true)
+                Label("0 / 3",13,true)
             }
             Spacer(Modifier.height(3.dp))
             Column(verticalArrangement=Arrangement.spacedBy(3.dp)){
-                Text("마지막 3km만 남았어요",fontSize=23.sp,fontWeight=FontWeight.ExtraBold,color=Ink,letterSpacing=(-.8).sp)
-                Label("나만의 러닝 미션을 만나기까지 한 걸음이에요.",13)
+                Text("첫 3km부터 시작해 볼까요?",fontSize=23.sp,fontWeight=FontWeight.ExtraBold,color=Ink,letterSpacing=(-.8).sp)
+                Label("3km 자유 주행을 세 번 마치면 맞춤 미션이 열려요.",13)
             }
             Column(verticalArrangement=Arrangement.spacedBy(7.dp)){
                 Box(Modifier.fillMaxWidth().height(5.dp).background(Ink.copy(alpha=.13f),CircleShape)){
-                    Spacer(Modifier.fillMaxWidth(2f/3f).fillMaxHeight().background(Ink,CircleShape))
+                    
                 }
                 Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.SpaceBetween){
                     (1..3).forEach { n -> Row(verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(4.dp)){
-                        Box(Modifier.size(16.dp).background(if(n<3) Ink else Color.Transparent,CircleShape).border(1.dp,Ink.copy(alpha=.25f),CircleShape),contentAlignment=Alignment.Center){Label(if(n<3)"✓" else "3",10,true,if(n<3)Lime else Ink)}
+                        Box(Modifier.size(16.dp).background(Color.Transparent,CircleShape).border(1.dp,Ink.copy(alpha=.25f),CircleShape),contentAlignment=Alignment.Center){Label(n.toString(),10,true,Ink)}
                         Label("${n}회",11)
                     } }
                 }
@@ -66,7 +66,7 @@ import androidx.compose.ui.unit.*
     }
     CardBox {
         Row(Modifier.fillMaxWidth(),verticalAlignment=Alignment.CenterVertically){
-            listOf(Triple("8.4","km","총 거리"),Triple("2","회","러닝 횟수"),Triple("7′12″","/km","평균 페이스")).forEachIndexed { i,(value,unit,title) ->
+            listOf(Triple("0","km","총 거리"),Triple("0","회","러닝 횟수"),Triple("—","/km","평균 페이스")).forEachIndexed { i,(value,unit,title) ->
                 if(i>0) Spacer(Modifier.width(1.dp).height(26.dp).background(Mist))
                 Column(Modifier.weight(1f),horizontalAlignment=Alignment.CenterHorizontally){
                     Row(verticalAlignment=Alignment.Bottom){Label(value,19,true);Label(" $unit",10,false,Muted)}
@@ -74,7 +74,7 @@ import androidx.compose.ui.unit.*
                 }
             }
         }
-        HorizontalDivider(color=Mist);WeekChart()
+        HorizontalDivider(color=Mist); Label("첫 러닝을 마치면 주간 기록이 쌓여요.",12,false,Muted)
     }
     Spacer(Modifier.height(1.dp))
     HomeHeading("맞춤 미션","나를 위한 다음 러닝")
@@ -92,3 +92,4 @@ import androidx.compose.ui.unit.*
         Label("›",22)
     }
 }
+

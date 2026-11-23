@@ -72,7 +72,7 @@ internal data class MissionRecommendation(val title:String,val description:Strin
                 )
             } else {
                 Column(Modifier.fillMaxSize().padding(pad).verticalScroll(rememberScrollState()).padding(20.dp),verticalArrangement=Arrangement.spacedBy(18.dp)){
-                    val headers=mapOf("홈" to ("좋은 아침이에요" to "민수님, 오늘도 가볍게!"),"미션" to ("내 페이스에 꼭 맞는" to "러닝 미션"),
+                    val headers=mapOf("홈" to ("러닝을 시작해요" to "반가워요, 러너님!"),"미션" to ("내 페이스에 꼭 맞는" to "러닝 미션"),
                         "기록" to ("조금씩, 분명하게" to "나의 성장 기록"),"마이" to ("내 러닝을 한눈에" to "마이 페이지"))
                     val header=headers.getValue(tab)
                     Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.SpaceBetween,verticalAlignment=Alignment.CenterVertically){
@@ -105,6 +105,7 @@ internal data class MissionRecommendation(val title:String,val description:Strin
     }
 }
 private fun clock(ms:Long)=String.format(Locale.ROOT,"%02d:%02d",ms/60000,ms/1000%60)
+
 
 
 

@@ -60,12 +60,12 @@ internal fun MissionContent(recommendation: MissionRecommendation?, start: (Stri
             Box(Modifier.rotate(-5f)){TileIcon(if(recommendation==null)"lock" else "goal",Lime,Ink,60)}
         }
         Box(Modifier.background(Ink.copy(.07f),CircleShape).padding(horizontal=12.dp,vertical=5.dp)){
-            Label(if(recommendation==null)"1회 남음" else "오늘의 미션",11,true)
+            Label(if(recommendation==null)"3회 남음" else "오늘의 미션",11,true)
         }
         Label(recommendation?.title?:"맞춤 미션을 준비하고 있어요",19)
-        Text(recommendation?.description?:"3km 자유 주행을 한 번 더 완료하면\n러닝 수준을 분석해 첫 미션을 알려드려요.",
+        Text(recommendation?.description?:"3km 자유 주행을 세 번 완료하면\n러닝 수준을 분석해 첫 미션을 알려드려요.",
             color=Muted,fontSize=13.sp,lineHeight=20.sp,textAlign=TextAlign.Center)
-        Action(if(recommendation==null)"마지막 측정 시작하기" else "이 훈련을 미션으로 시작"){start(recommendation?.title?:"3km 자유 주행")}
+        Action(if(recommendation==null)"첫 측정 시작하기" else "이 훈련을 미션으로 시작"){start(recommendation?.title?:"3km 자유 주행")}
     }
     HomeHeading("미리 보기","이런 미션을 만나게 돼요")
     Column(verticalArrangement=Arrangement.spacedBy(9.dp)){
@@ -80,61 +80,39 @@ internal fun MissionContent(recommendation: MissionRecommendation?, start: (Stri
 
 @Composable
 internal fun RecordsContent(lastRun: String?) {
-    Box(Modifier.fillMaxWidth().clip(RoundedCornerShape(24.dp)).background(Ink)){
-        Canvas(Modifier.matchParentSize()){
-            drawCircle(Lime.copy(.05f),48.dp.toPx(),Offset(size.width-18.dp.toPx(),16.dp.toPx()),style=Stroke(17.dp.toPx()))
-        }
-        Row(Modifier.fillMaxWidth().padding(20.dp),verticalAlignment=Alignment.CenterVertically){
-            Column(Modifier.weight(1f),verticalArrangement=Arrangement.spacedBy(8.dp)){
-                Label("이번 달 총 거리",11,false,Color.LightGray)
-                Row(verticalAlignment=Alignment.Bottom){Label("18.6",32,true,Color.White);Label(" km",12,false,Color.White)}
-                Label("지난달보다 12% 더 달렸어요",11,true,Lime)
-            }
-            Box(Modifier.size(52.dp),contentAlignment=Alignment.Center){
-                Canvas(Modifier.fillMaxSize().padding(3.dp)){
-                    val stroke=Stroke(4.dp.toPx()); drawCircle(Lime.copy(.18f),style=stroke)
-                    drawArc(Lime,-135f,90f,false,style=stroke)
-                };Label("+12%",11,true,Lime)
-            }
-        }
+    CardBox(Ink) {
+        Label("이번 달 총 거리",12,false,Color.LightGray)
+        Label("0 km",32,true,Color.White)
     }
-    Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.SpaceBetween,verticalAlignment=Alignment.Bottom){
-        HomeHeading("최근 활동","러닝 기록");Pill("5월")
-    }
-    Column {
-        if(lastRun!=null) {Label("최근 미리보기 · $lastRun",14,true);HorizontalDivider(color=Line)}
-        val dates=listOf("5월 17일 · 금요일","5월 14일 · 화요일","5월 9일 · 목요일")
-        val details=listOf("6′58″ /km   ·   20:54","7′26″ /km   ·   22:18","7′41″ /km   ·   18:36")
-        val colors=listOf(Color(0xffedf9ca),Color(0xffe1eefb),Color(0xffeee8fb))
-        dates.forEachIndexed{ index,date->
-            Row(Modifier.fillMaxWidth().padding(vertical=13.dp),verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(10.dp)){
-                TileIcon("route",colors[index],listOf(Color(0xff748f28),Color(0xff497ca1),Color(0xff856fa3))[index])
-                Column(Modifier.weight(1f)){Label(date,11,false,Muted)
-                    Row(verticalAlignment=Alignment.CenterVertically){Label(if(index==2)"2.42" else "3.00",16,true);Label(" km   ·   "+details[index],11,false,Muted)}}
-                Label("›",18)
-            };HorizontalDivider(color=Line)
+    HomeHeading("최근 활동","러닝 기록")
+    CardBox {
+        if (lastRun == null) {
+            Label("아직 러닝 기록이 없어요",16,true)
+            Label("홈에서 첫 3km 자유 주행을 시작해 보세요.",13,false,Muted)
+        } else {
+            Label("최근 러닝 미리보기",16,true)
+            Label("러닝 시간 · $lastRun",14)
         }
     }
 }
-
 @Composable private fun Pill(title:String) {
     Box(Modifier.border(1.dp,Line,CircleShape).padding(horizontal=11.dp,vertical=5.dp)){Label(title,11,false,Muted)}
 }
 
 @Composable internal fun ProfileContent(open:(String)->Unit) {
     Row(Modifier.fillMaxWidth(),verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(12.dp)){
-        Box(Modifier.size(52.dp).rotate(-4f).background(Lime,RoundedCornerShape(17.dp)),contentAlignment=Alignment.Center){Label("민",22,true)}
-        Column(Modifier.weight(1f)){Label("김민수",19);Label("꾸준히 달린 지 18일째",11,false,Muted)}
+        Box(Modifier.size(52.dp).rotate(-4f).background(Lime,RoundedCornerShape(17.dp)),contentAlignment=Alignment.Center){Glyph("마이")}
+        Column(Modifier.weight(1f)){Label("러너",19);Label("첫 러닝을 기다리고 있어요",11,false,Muted)}
         Box(Modifier.sizeIn(minWidth=48.dp,minHeight=48.dp).clickable{open("편집")},contentAlignment=Alignment.Center){Pill("편집")}
     }
     Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(19.dp)).background(Ink).clickable{open("나의 러닝 목표")}.padding(16.dp),
         verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(12.dp)){
         TileIcon("goal",Lime,Ink)
-        Column(Modifier.weight(1f)){Label("나의 러닝 목표",10,false,Color.LightGray);Label("10km 완주하기",16,true,Color.White);Label("목표 페이스 6′30″ /km",11,true,Lime)}
+        Column(Modifier.weight(1f)){Label("나의 러닝 목표",10,false,Color.LightGray);Label("목표 미설정",16,true,Color.White);Label("거리 또는 페이스 목표",11,true,Lime)}
         Label("›",19,false,Color.White)
     }
     Row(Modifier.fillMaxWidth(),verticalAlignment=Alignment.CenterVertically){
-        listOf("12" to "총 러닝","48.2" to "누적 km","7′18″" to "평균 페이스").forEachIndexed{i,(value,name)->
+        listOf("0" to "총 러닝","0" to "누적 km","—" to "평균 페이스").forEachIndexed{i,(value,name)->
             if(i>0)Spacer(Modifier.width(1.dp).height(35.dp).background(Line))
             Column(Modifier.weight(1f),horizontalAlignment=Alignment.CenterHorizontally){Label(value,18,true);Label(name,11,false,Muted)}
         }
@@ -148,3 +126,4 @@ internal fun RecordsContent(lastRun: String?) {
         }
     }
 }
+
