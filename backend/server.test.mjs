@@ -4,14 +4,17 @@ import assert from "node:assert/strict";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { DatabaseSync } from "node:sqlite";
+import { createHash } from "node:crypto";
 import { test } from "node:test";
 
 const token = "a".repeat(32);
 const otherToken = "b".repeat(32);
 const run = { clientRunId: "test-1", distanceMeters: 3000, movingSeconds: 1260, type: "assessment" };
 
-async function withServer(check) {
+async function withServer(check, { enableDevTokens = true } = {}) {
   const directory = mkdtempSync(join(tmpdir(), "running-api-"));
+  const databasePath = join(directory, "runs.db");
   let processHandle;
   let endpoint;
 
@@ -20,8 +23,9 @@ async function withServer(check) {
       env: {
         ...process.env,
         PORT: "0",
-        RUN_DB_PATH: join(directory, "runs.db"),
-        RUN_API_TOKENS: JSON.stringify({ [token]: "one", [otherToken]: "two" }),
+        RUN_DB_PATH: databasePath,
+        RUN_API_TOKENS: JSON.stringify(enableDevTokens ? { [token]: "one", [otherToken]: "two" } : {}),
+        NODE_ENV: "test",
       },
       stdio: ["ignore", "pipe", "inherit"],
     });
@@ -43,7 +47,9 @@ async function withServer(check) {
 
   const request = (path, bearer, method = "GET", body) => fetch(endpoint + path, {
     method,
-    headers: { "Content-Type": "application/json", Authorization: `Bearer ${bearer}` },
+    headers: bearer
+      ? { "Content-Type": "application/json", Authorization: `Bearer ${bearer}` }
+      : { "Content-Type": "application/json" },
     body: JSON.stringify(body),
   });
 
@@ -51,6 +57,7 @@ async function withServer(check) {
     await start();
     await check({
       request,
+      databasePath,
       upload: (bearer, body = run) => request("/runs", bearer, "POST", body),
       restart: async () => {
         await stop();
@@ -149,4 +156,67 @@ test("active goals can be replaced, survive a restart, and remain private to eac
     assert.deepEqual(await (await request(path, token)).json(), { goal: pace });
     assert.deepEqual(await (await request(path, otherToken)).json(), { goal: distance });
   });
+});
+
+test("registered accounts keep distinct data and can revoke or expire their sessions", async () => {
+  await withServer(async ({ request, upload, restart, databasePath }) => {
+    const credentials = { email: " Runner@Example.test ", password: "test-runner-2026-example" };
+    const other = { ...credentials, email: "other@example.test" };
+    const post = (path, body) => request(path, null, "POST", body);
+
+    const invalidRegistration = await post("/auth/register", { ...credentials, password: "too short" });
+    assert.equal(invalidRegistration.status, 400);
+    const registered = await post("/auth/register", credentials);
+    assert.equal(registered.status, 201);
+    const { user } = await registered.json();
+    assert.deepEqual(user, { id: user.id, email: "runner@example.test" });
+    assert.equal((await post("/auth/register", { ...credentials, email: user.email })).status, 409);
+    assert.equal((await post("/auth/register", other)).status, 201);
+
+    for (const invalid of [
+      { ...credentials, password: "wrong password" },
+      { ...credentials, email: "unknown@example.test" },
+    ]) {
+      const denied = await post("/auth/login", invalid);
+      assert.equal(denied.status, 401);
+      assert.deepEqual(await denied.json(), { error: "invalid_credentials" });
+    }
+
+    const loggedIn = await post("/auth/login", { ...credentials, email: user.email });
+    assert.equal(loggedIn.status, 200);
+    assert.equal(loggedIn.headers.get("cache-control"), "no-store");
+    const session = await loggedIn.json();
+    assert.deepEqual(session.user, user);
+    assert.equal(session.tokenType, "Bearer");
+    assert.ok(Date.parse(session.expiresAt) > Date.now());
+    const otherSession = await (await post("/auth/login", other)).json();
+    assert.notEqual(otherSession.user.id, user.id);
+    assert.equal((await request("/auth/me", token)).status, 401);
+
+    const goal = { type: "distance", targetDistanceMeters: 5000 };
+    assert.equal((await upload(session.accessToken)).status, 201);
+    assert.equal((await request("/goals/active", session.accessToken, "PUT", goal)).status, 200);
+    assert.deepEqual(await (await request("/goals/active", otherSession.accessToken)).json(), { goal: null });
+    assert.equal((await (await request("/assessment", otherSession.accessToken)).json()).completedRuns, 0);
+    await restart();
+    assert.deepEqual(await (await request("/auth/me", session.accessToken)).json(), { user });
+    assert.equal((await upload(session.accessToken)).status, 200);
+
+    const db = new DatabaseSync(databasePath);
+    try {
+      const stored = db.prepare("SELECT * FROM users WHERE id = ?").get(user.id);
+      assert.equal(stored.password_hash.length, 64);
+      assert.equal(stored.password_salt.length, 16);
+      const hash = createHash("sha256").update(otherSession.accessToken).digest("hex");
+      assert.equal(db.prepare("UPDATE auth_sessions SET expires_at = 0 WHERE token_hash = ?").run(hash).changes, 1);
+    } finally {
+      db.close();
+    }
+    assert.equal((await request("/auth/me", otherSession.accessToken)).status, 401);
+    assert.equal((await request("/auth/logout", session.accessToken, "POST")).status, 204);
+    assert.equal((await upload(session.accessToken)).status, 401);
+    const signedBackIn = await (await post("/auth/login", credentials)).json();
+    assert.deepEqual(signedBackIn.user, user);
+    assert.deepEqual(await (await request("/goals/active", signedBackIn.accessToken)).json(), { goal });
+  }, { enableDevTokens: false });
 });

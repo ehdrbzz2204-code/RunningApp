@@ -3,12 +3,38 @@
 Node.js 24에서 실행합니다. SQLite 데이터는 기본적으로 `backend/data/runs.db`에 저장됩니다.
 
 ```powershell
-$runToken = node -e "process.stdout.write(require('node:crypto').randomBytes(32).toString('hex'))"
-$env:RUN_API_TOKENS = @{ $runToken = 'local-runner' } | ConvertTo-Json -Compress
 node backend/server.mjs
 ```
 
-서버는 로컬 주소 `127.0.0.1:3000`에서 시작합니다. 개발용 Bearer 토큰과 사용자 ID 매핑을 환경 변수로 설정합니다. 실제 로그인과 HTTPS는 모바일 배포 전에 연동합니다.
+서버는 저장소 루트에서 실행하며 `127.0.0.1:3000`에서 시작합니다.
+
+## 가입과 로그인
+
+가입과 로그인은 `Content-Type: application/json`으로 이메일과 비밀번호를 보냅니다.
+
+```json
+{
+  "email": "runner@example.test",
+  "password": "<15자 이상의 비밀번호>"
+}
+```
+
+| API | 성공 응답 | 동작 |
+| --- | --- | --- |
+| `POST /auth/register` | `201`과 `{"user":{"id":"<계정 UUID>","email":"runner@example.test"}}` | 계정을 생성합니다. 가입 후 로그인으로 토큰을 발급받습니다. |
+| `POST /auth/login` | `200`과 `accessToken`, `tokenType`, `expiresAt`, `user` | 세션 토큰을 발급합니다. `tokenType`은 `Bearer`이고 `expiresAt`은 UTC ISO 8601입니다. |
+| `GET /auth/me` | `200`과 `{"user": ...}` | 현재 토큰의 계정 정보를 반환합니다. |
+| `POST /auth/logout` | `204` | 요청에 사용된 토큰을 폐기합니다. |
+
+이메일은 앞뒤 공백을 제거하고 소문자로 저장합니다. 가입 비밀번호는 15~128자이며 앞뒤 공백도 비밀번호의 일부입니다. 이메일과 비밀번호 형식이 맞지 않으면 `400 invalid_registration` 또는 `400 invalid_login`, 이미 등록된 이메일은 `409 email_unavailable`, 로그인 정보가 틀리면 `401 invalid_credentials`를 반환합니다. 가입·로그인 요청이 서버의 처리 한도를 넘으면 `429 too_many_requests`를 반환합니다.
+
+앱은 로그인 응답의 토큰을 기기의 보안 저장소에 보관하고 `Authorization: Bearer <accessToken>`으로 전송합니다. 러닝, 초기 체력, 목표 API는 로그인 토큰에서 계정 ID를 확인합니다. 토큰은 7일 후 만료되며 로그아웃하거나 만료된 토큰으로 보호된 API를 호출하면 `401 unauthorized`를 반환합니다. 새로 로그인해도 계정 ID는 동일합니다.
+
+오프라인 전송 대기 기록은 계정 ID별로 보관합니다. `401`을 받으면 기기 기록을 유지하고, 같은 계정으로 재로그인한 뒤 해당 계정의 기록을 재전송합니다.
+
+비밀번호는 사용자별 salt와 scrypt 해시로 저장하고 세션 토큰은 SHA-256 해시로 저장합니다. 현재 구현은 로컬 개발과 앱 연동에 사용할 수 있습니다. 외부 배포에는 HTTPS와 이메일 소유 확인·계정 복구가 남아 있습니다.
+
+기존 통합 테스트용 `RUN_API_TOKENS`는 선택 사항이며 `NODE_ENV=production`에서는 사용할 수 없습니다. 개발용 ID로 저장된 기록은 새 계정에 자동으로 연결되지 않습니다.
 
 ## 러닝 업로드
 
