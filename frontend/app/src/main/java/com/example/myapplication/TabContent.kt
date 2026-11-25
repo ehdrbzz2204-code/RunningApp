@@ -98,11 +98,10 @@ internal fun RecordsContent(lastRun: String?) {
 @Composable private fun Pill(title:String) {
     Box(Modifier.border(1.dp,Line,CircleShape).padding(horizontal=11.dp,vertical=5.dp)){Label(title,11,false,Muted)}
 }
-
-@Composable internal fun ProfileContent(open:(String)->Unit) {
+@Composable internal fun ProfileContent(name: String?, email: String?, open:(String)->Unit, logout:()->Unit) {
     Row(Modifier.fillMaxWidth(),verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(12.dp)){
         Box(Modifier.size(52.dp).rotate(-4f).background(Lime,RoundedCornerShape(17.dp)),contentAlignment=Alignment.Center){Glyph("마이")}
-        Column(Modifier.weight(1f)){Label("러너",19);Label("첫 러닝을 기다리고 있어요",11,false,Muted)}
+        Column(Modifier.weight(1f)){Label(name ?: "러너",19);Label(email ?: "첫 러닝을 기다리고 있어요",11,false,Muted)}
         Box(Modifier.sizeIn(minWidth=48.dp,minHeight=48.dp).clickable{open("편집")},contentAlignment=Alignment.Center){Pill("편집")}
     }
     Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(19.dp)).background(Ink).clickable{open("나의 러닝 목표")}.padding(16.dp),
@@ -125,5 +124,12 @@ internal fun RecordsContent(lastRun: String?) {
             HorizontalDivider(color=Line)
         }
     }
+    Box(
+        Modifier.fillMaxWidth().clip(RoundedCornerShape(15.dp))
+            .border(1.dp,Color(0xff9e2a2b).copy(alpha=.3f),RoundedCornerShape(15.dp))
+            .clickable(onClick=logout).heightIn(min=50.dp),
+        contentAlignment=Alignment.Center,
+    ){ Label("로그아웃",14,true,Color(0xff9e2a2b)) }
+
 }
 
