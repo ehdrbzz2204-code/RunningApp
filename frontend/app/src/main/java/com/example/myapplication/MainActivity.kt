@@ -21,12 +21,27 @@ import androidx.compose.ui.unit.*
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import java.util.Locale
+import androidx.compose.runtime.collectAsState
+
+import android.preference.PreferenceManager
+import org.osmdroid.config.Configuration
+import org.maplibre.android.MapLibre
+
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+        MapLibre.getInstance(applicationContext)
+
         setContent {
+
+            Configuration.getInstance().load(
+                applicationContext,
+                PreferenceManager.getDefaultSharedPreferences(applicationContext),
+            )
+            Configuration.getInstance().userAgentValue = "MyApplication/1.0 (com.example.myapplication)"
+
             MaterialTheme(
                 colorScheme = lightColorScheme(
                     primary = Ink,
@@ -114,30 +129,60 @@ internal fun RunningApp(
     onLogout: () -> Unit = {},
     recommendation: MissionRecommendation? = null,
 ) {
+    val context = LocalContext.current
     var tab by rememberSaveable { mutableStateOf("홈") }
     var dialog by rememberSaveable { mutableStateOf<String?>(null) }
-    var active by rememberSaveable { mutableStateOf(false) }
     var measuring by rememberSaveable { mutableStateOf(false) }
-    var paused by rememberSaveable { mutableStateOf(false) }
-    var started by rememberSaveable { mutableLongStateOf(0) }
-    var accumulated by rememberSaveable { mutableLongStateOf(0) }
     var lastRun by rememberSaveable { mutableStateOf<String?>(null) }
-    var sessionTitle by rememberSaveable { mutableStateOf("3km 자유 주행") }
-    val now = { SystemClock.elapsedRealtime() }
-    val elapsed = { accumulated + if (paused) 0L else now() - started }
-    val start: (String) -> Unit = { title ->
-        if (!active) {
-            active = true
-            paused = false
-            accumulated = 0
-            started = now()
-            sessionTitle = title
+    var lastFinishedRun by remember { mutableStateOf<RunTrackingState?>(null) }
+
+    var boundService by remember { mutableStateOf<TrackingService?>(null) }
+    val serviceState by (boundService?.state ?: remember { kotlinx.coroutines.flow.MutableStateFlow(RunTrackingState()) }).collectAsState()
+
+    DisposableEffect(context) {
+        val connection = object : android.content.ServiceConnection {
+            override fun onServiceConnected(name: android.content.ComponentName?, service: android.os.IBinder?) {
+                val binder = service as? TrackingService.LocalBinder
+                boundService = binder?.getService()
+            }
+
+            override fun onServiceDisconnected(name: android.content.ComponentName?) {
+                boundService = null
+            }
         }
-        measuring = true
+        val intent = android.content.Intent(context, TrackingService::class.java)
+        context.bindService(intent, connection, android.content.Context.BIND_AUTO_CREATE)
+        onDispose {
+            context.unbindService(connection)
+        }
     }
+
+    val sendServiceAction: (String, String?) -> Unit = { action, title ->
+        val intent = android.content.Intent(context, TrackingService::class.java).apply {
+            this.action = action
+            if (title != null) putExtra(TrackingService.EXTRA_TITLE, title)
+        }
+        if (action == TrackingService.ACTION_START) {
+            androidx.core.content.ContextCompat.startForegroundService(context, intent)
+        } else {
+            context.startService(intent)
+        }
+    }
+
+    val startWithPermission = rememberStartRunWithPermissions(
+        context = context,
+        onPermissionGrantedStart = { title ->
+            if (!serviceState.isActive) {
+                sendServiceAction(TrackingService.ACTION_START, title)
+            }
+            measuring = true
+        },
+    )
+
     BackHandler(enabled = dialog == null && (measuring || tab != "홈")) {
         if (measuring) measuring = false else tab = "홈"
     }
+
     Scaffold(
         containerColor = Paper,
         bottomBar = {
@@ -158,20 +203,23 @@ internal fun RunningApp(
     ) { pad ->
         key(tab, measuring) {
             if (measuring) {
-                var tick by remember { mutableLongStateOf(elapsed()) }
-                LaunchedEffect(paused) { do { tick = elapsed(); delay(250) } while (!paused) }
+                var recenterTick by remember { mutableIntStateOf(0) }
+
                 MeasurementScreen(
                     modifier = Modifier.padding(pad).blur(if (dialog == "러닝 종료") 4.dp else 0.dp),
-                    title = sessionTitle,
-                    time = clock(tick),
-                    paused = paused,
+                    trackingState = serviceState,
                     stop = { dialog = "러닝 종료" },
                     toggle = {
-                        if (paused) started = now() else accumulated = elapsed()
-                        paused = !paused
-                    }
+                        if (serviceState.isPaused) {
+                            sendServiceAction(TrackingService.ACTION_RESUME, null)
+                        } else {
+                            sendServiceAction(TrackingService.ACTION_PAUSE, null)
+                        }
+                    },
+                    reset = { recenterTick++ },
+                    recenterTrigger = recenterTick,
                 )
-            } else {
+            }else {
                 Column(
                     Modifier.fillMaxSize().padding(pad).verticalScroll(rememberScrollState()).padding(20.dp),
                     verticalArrangement = Arrangement.spacedBy(18.dp),
@@ -195,33 +243,39 @@ internal fun RunningApp(
                                 .semantics { contentDescription = "알림" },
                         ) { Glyph("알림") }
                     }
-                    if (active) Action("진행 중인 러닝으로 돌아가기") { measuring = true }
+                    if (serviceState.isActive) {
+                        Action("진행 중인 러닝으로 돌아가기") { measuring = true }
+                    }
                     when (tab) {
                         "홈" -> HomeContent(
                             recommendation,
-                            { start("3km 자유 주행") },
+                            { startWithPermission("3km 자유 주행") },
                             { tab = "기록" },
-                            { tab = "미션" })
-
-                        "미션" -> MissionContent(recommendation, start)
+                            { tab = "미션" },
+                        )
+                        "미션" -> MissionContent(recommendation, startWithPermission)
                         "기록" -> RecordsContent(lastRun)
                         "마이" -> ProfileContent(
                             session?.name,
                             session?.email,
                             open = { dialog = it },
-                            logout = { dialog = "로그아웃" })
+                            logout = { dialog = "로그아웃" },
+                        )
                     }
                 }
             }
         }
     }
+
     dialog?.let { title ->
         when (title) {
             "러닝 종료" -> EndRunDialog(
                 dismiss = { dialog = null },
                 save = {
-                    lastRun = clock(elapsed())
-                    active = false
+                    val snapshot = serviceState.copy(isActive = false, isPaused = false)
+                    lastFinishedRun = snapshot
+                    lastRun = "${clock(snapshot.elapsedMs)} · ${String.format(Locale.ROOT, "%.2fkm", snapshot.distanceMeters / 1000.0)}"
+                    sendServiceAction(TrackingService.ACTION_STOP, null)
                     measuring = false
                     dialog = null
                 }
@@ -240,6 +294,7 @@ internal fun RunningApp(
             )
         }
     }
+
 }
 
 private fun clock(ms: Long) = String.format(Locale.ROOT, "%02d:%02d", ms / 60000, ms / 1000 % 60)
