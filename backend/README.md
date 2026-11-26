@@ -47,6 +47,7 @@ node backend/server.mjs
 | `movingSeconds` | 정수 | 필수. 초 단위, 1 이상. |
 | `type` | 문자열 | 필수. `free`, `assessment` 또는 `mission`. |
 | `missionId` | 문자열 또는 null | `mission`이면 서버에서 시작한 미션의 ID가 필수입니다. 그 외에는 생략하거나 `null`을 보냅니다. |
+| `finishedAt` | 문자열 또는 null | 실제 주행 종료 시각. UTC ISO 8601 형식으로 전송합니다. 예를 들어 `2026-11-27T06:30:00.000Z`입니다. 구버전 앱은 생략하거나 `null`을 보낼 수 있습니다. |
 
 ### 요청 예시
 
@@ -86,6 +87,16 @@ node backend/server.mjs
 오류의 응답 형식은 `{"error":"invalid_run"}`과 같습니다. 앱은 시작 시 만든 `clientRunId`와 완료 시 확정한 데이터를 함께 저장하고, 연결 끊김·응답 유실·서버 오류 후에도 그대로 재전송합니다.
 
 미션 주행의 `201`과 `200` 응답에는 `missionResult`가 추가됩니다. 여기에는 `outcome`(`success` 또는 `failed`), `failReason`, `paceSecondsPerKm`, `goalAchieved`, `feedback`이 포함됩니다. 미달성도 저장에 성공했다면 `201`입니다.
+
+오프라인에서 주행을 마치면 종료 시각을 기기에 기록하고 재전송에도 같은 값을 보냅니다. 서버는 밀리초가 없는 UTC 시각에도 `.000`을 붙여 저장합니다.
+
+## 러닝 기록 조회
+
+`GET /runs?limit=20`은 Bearer 토큰에 해당하는 계정의 러닝 기록만 조회합니다. `limit`은 1~100이고 기본값은 20입니다. 응답은 `{"items":[...],"nextCursor":null}` 형식입니다. `nextCursor`에 값이 있으면 다음 요청의 `cursor`에 그대로 보냅니다. 잘못된 파라미터나 사용할 수 없는 커서는 `400 invalid_history_query`입니다.
+
+각 항목에는 `id`, `clientRunId`, `distanceMeters`, `movingSeconds`, `type`, `missionId`, `finishedAt`, `averagePaceSecondsPerKm`, `missionResult`가 들어갑니다. 거리가 0이면 평균 페이스, 미션 결과가 없으면 `missionResult`는 `null`입니다.
+
+실제 종료 시각이 최신인 기록부터 반환합니다. 시각이 같으면 서버 기록 ID로 정렬 순서를 고정합니다. 실제 종료 시각이 없는 과거 기록은 목록 뒤에 `finishedAt: null`로 표시됩니다.
 
 ## 초기 체력 측정
 

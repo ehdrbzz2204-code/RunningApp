@@ -7,6 +7,7 @@ import { createAuthStorage } from "./auth-storage.mjs";
 import { assessmentRequirements, normalizeGoal, summarizeAssessment } from "./runner-profile.mjs";
 import { createStorage } from "./storage.mjs";
 import { createMissionService } from "./mission-service.mjs";
+import { createRunHistory, normalizeFinishedAt, readHistoryQuery } from "./run-history.mjs";
 
 const devTokens = new Map(Object.entries(JSON.parse(process.env.RUN_API_TOKENS ?? "{}")));
 if ([...devTokens].some(([token, user]) =>
@@ -22,6 +23,7 @@ mkdirSync(dirname(databasePath), { recursive: true });
 const db = new DatabaseSync(databasePath);
 const storage = createStorage(db);
 const missions = createMissionService(db, storage);
+const listRuns = createRunHistory(db);
 const auth = createAuth(createAuthStorage(db));
 
 function reply(response, status, body) {
@@ -47,7 +49,7 @@ async function readJson(request) {
 }
 
 function normalizeRun(input) {
-  const { clientRunId, distanceMeters, movingSeconds, type, missionId = null } = input ?? {};
+  const { clientRunId, distanceMeters, movingSeconds, type, missionId = null, finishedAt } = input ?? {};
   const validId = (value) => typeof value === "string" && /^[a-zA-Z0-9_-]{1,128}$/.test(value);
   if (!validId(clientRunId) ||
       !Number.isSafeInteger(distanceMeters) || distanceMeters < 0 ||
@@ -55,7 +57,11 @@ function normalizeRun(input) {
       !(type === "mission" ? validId(missionId) : ["free", "assessment"].includes(type) && missionId === null)) {
     return null;
   }
-  return { clientRunId, distanceMeters, movingSeconds, type, missionId };
+  const run = { clientRunId, distanceMeters, movingSeconds, type, missionId };
+  // Preserve the stored payload for retries from clients that omit the timestamp.
+  if (finishedAt == null) return run;
+  const timestamp = normalizeFinishedAt(finishedAt);
+  return timestamp === null ? null : { ...run, finishedAt: timestamp };
 }
 
 function withJsonBody(normalize, invalidError, handle) {
@@ -128,6 +134,15 @@ const publicRoutes = new Map([
 ]);
 
 const routes = new Map([
+  ["GET /runs", (request, response, userId) => {
+    const query = readHistoryQuery(request.url.slice("/runs".length));
+    const page = query && listRuns(userId, query);
+    if (!page) {
+      reply(response, 400, { error: "invalid_history_query" });
+      return;
+    }
+    reply(response, 200, page);
+  }],
   ["POST /missions/recommend", withJsonBody((input) => {
     const date = input?.date;
     if (typeof date !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(date)) return null;
@@ -184,7 +199,9 @@ const routes = new Map([
 ]);
 
 const server = createServer(async (request, response) => {
-  const route = `${request.method} ${request.url}`;
+  const route = request.method === "GET" && request.url.startsWith("/runs?")
+    ? "GET /runs"
+    : `${request.method} ${request.url}`;
   const publicHandler = publicRoutes.get(route);
   const handle = routes.get(route);
   if (!publicHandler && !handle) {
