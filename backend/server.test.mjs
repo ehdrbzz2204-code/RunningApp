@@ -262,6 +262,8 @@ test("mission results use the original conditions and apply only once after retr
     assert.equal((await late.json()).missionResult.outcome, "failed");
     await restart();
     assert.deepEqual(await (await upload(token, missionRun)).json(), first);
+    const history = await (await request("/runs", token)).json();
+    assert.deepEqual(history.items.find((item) => item.id === first.id).missionResult, first.missionResult);
 
     const db = new DatabaseSync(databasePath);
     try {
@@ -271,6 +273,40 @@ test("mission results use the original conditions and apply only once after retr
     } finally {
       db.close();
     }
+  });
+});
+
+test("running history orders late uploads by finish time and pages account data", async () => {
+  await withServer(async ({ request, upload, restart }) => {
+    const newer = { ...run, clientRunId: "newer", finishedAt: "2026-11-27T06:30:00Z" };
+    const older = { ...run, clientRunId: "older", finishedAt: "2026-11-26T06:30:00.000Z" };
+    assert.equal((await upload(token, newer)).status, 201);
+    assert.equal((await upload(token, older)).status, 201);
+    assert.equal((await upload(token, { ...newer, finishedAt: "2026-11-27T06:30:00.000Z" })).status, 200);
+    assert.equal((await upload(token, { ...newer, finishedAt: older.finishedAt })).status, 409);
+    assert.equal((await upload(token, { ...older, clientRunId: "bad-date", finishedAt: "2026-02-30T06:30:00Z" })).status, 400);
+    assert.equal((await upload(token, { ...older, clientRunId: "tied" })).status, 201);
+    assert.equal((await upload(token, run)).status, 201);
+    const other = await (await upload(otherToken, newer)).json();
+    assert.equal((await request("/runs", "invalid")).status, 401);
+    assert.equal((await request("/runs?limit=101", token)).status, 400);
+    assert.equal((await request(`/runs?cursor=${other.id}`, token)).status, 400);
+    await restart();
+
+    const loadPage = async (query) => {
+      const response = await request("/runs" + query, token);
+      assert.equal(response.status, 200);
+      return response.json();
+    };
+    const first = await loadPage("?limit=2");
+    const second = await loadPage(`?limit=2&cursor=${first.nextCursor}`);
+    const items = [...first.items, ...second.items];
+    assert.deepEqual(items.map((item) => item.finishedAt), [
+      "2026-11-27T06:30:00.000Z", older.finishedAt, older.finishedAt, null,
+    ]);
+    assert.deepEqual(items.map((item) => item.clientRunId).sort(), ["newer", "older", "test-1", "tied"]);
+    assert.ok(items.every((item) => item.averagePaceSecondsPerKm === 420 && item.missionResult === null));
+    assert.equal(second.nextCursor, null);
   });
 });
 
