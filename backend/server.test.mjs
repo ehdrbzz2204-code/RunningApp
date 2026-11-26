@@ -310,6 +310,58 @@ test("running history orders late uploads by finish time and pages account data"
   });
 });
 
+test("running statistics use Korean calendar boundaries and distance-weighted pace", async () => {
+  await withServer(async ({ request, upload }) => {
+    const records = [
+      ["before-month", "2026-10-31T14:59:59.999Z", 1000, 400],
+      ["month-start", "2026-10-31T15:00:00.000Z", 1000, 400],
+      ["before-week", "2026-11-22T14:59:59.999Z", 1000, 400],
+      ["week-start", "2026-11-22T15:00:00.000Z", 1000, 360],
+      ["week-last", "2026-11-29T14:59:59.999Z", 3000, 1260],
+      ["week-end", "2026-11-29T15:00:00.000Z", 1000, 400],
+      ["month-end", "2026-11-30T15:00:00.000Z", 1000, 400],
+    ];
+    for (const [clientRunId, finishedAt, distanceMeters, movingSeconds] of records) {
+      const response = await upload(token, { ...run, clientRunId, finishedAt, distanceMeters, movingSeconds });
+      assert.equal(response.status, 201);
+    }
+    assert.equal((await upload(token)).status, 201);
+    assert.equal((await upload(otherToken, { ...run, finishedAt: records[3][1] })).status, 201);
+
+    const weekPath = "/stats?period=week&date=2026-11-27";
+    assert.equal((await request(weekPath, "invalid")).status, 401);
+    assert.equal((await request("/stats?period=day", token)).status, 400);
+    assert.equal((await request("/stats?period=month&date=2026-02-30", token)).status, 400);
+
+    const week = await request(weekPath, token);
+    assert.equal(week.status, 200);
+    assert.deepEqual(await week.json(), {
+      period: "week",
+      timeZone: "Asia/Seoul",
+      startDate: "2026-11-23",
+      endDateExclusive: "2026-11-30",
+      runCount: 2,
+      totalDistanceMeters: 4000,
+      totalMovingSeconds: 1620,
+      averagePaceSecondsPerKm: 405,
+    });
+    const month = await (await request("/stats?period=month&date=2026-11-27", token)).json();
+    assert.equal(month.startDate, "2026-11-01");
+    assert.equal(month.endDateExclusive, "2026-12-01");
+    assert.equal(month.runCount, 5);
+    assert.equal(month.totalDistanceMeters, 7000);
+    assert.equal(month.totalMovingSeconds, 2820);
+    assert.equal(month.averagePaceSecondsPerKm, 403);
+
+    const empty = await (await request("/stats?period=month&date=2026-09-10", token)).json();
+    assert.equal(empty.runCount, 0);
+    assert.equal(empty.totalDistanceMeters, 0);
+    assert.equal(empty.totalMovingSeconds, 0);
+    assert.equal(empty.averagePaceSecondsPerKm, null);
+    assert.equal((await request("/stats?period=week", token)).status, 200);
+  });
+});
+
 test("next recommendations differ after successful and unsuccessful mission streaks", async () => {
   await withServer(async ({ request, upload, restart }) => {
     const recommend = async (bearer, date) => {
