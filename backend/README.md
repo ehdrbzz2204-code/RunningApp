@@ -45,8 +45,8 @@ node backend/server.mjs
 | `clientRunId` | 문자열 | 필수. 러닝마다 앱에서 발급한 고유 ID. 영문자, 숫자, `_`, `-`로 구성된 1~128자. UUID 권장. |
 | `distanceMeters` | 정수 | 필수. 미터 단위, 0 이상. |
 | `movingSeconds` | 정수 | 필수. 초 단위, 1 이상. |
-| `type` | 문자열 | 필수. `free` 또는 `assessment`. |
-| `missionId` | null | 현재 생략하거나 `null`을 전송. |
+| `type` | 문자열 | 필수. `free`, `assessment` 또는 `mission`. |
+| `missionId` | 문자열 또는 null | `mission`이면 서버에서 시작한 미션의 ID가 필수입니다. 그 외에는 생략하거나 `null`을 보냅니다. |
 
 ### 요청 예시
 
@@ -85,7 +85,7 @@ node backend/server.mjs
 
 오류의 응답 형식은 `{"error":"invalid_run"}`과 같습니다. 앱은 시작 시 만든 `clientRunId`와 완료 시 확정한 데이터를 함께 저장하고, 연결 끊김·응답 유실·서버 오류 후에도 그대로 재전송합니다.
 
-미션 주행은 미션의 사용자 소유권을 서버에서 검증할 수 있을 때 연결합니다.
+미션 주행의 `201`과 `200` 응답에는 `missionResult`가 추가됩니다. 여기에는 `outcome`(`success` 또는 `failed`), `failReason`, `paceSecondsPerKm`, `goalAchieved`, `feedback`이 포함됩니다. 미달성도 저장에 성공했다면 `201`입니다.
 
 ## 초기 체력 측정
 
@@ -117,7 +117,17 @@ node backend/server.mjs
 
 ## 미션 로직 연동
 
-미션 추천에 사용할 입력은 초기 측정의 `status`, `baselinePaceSecondsPerKm`와 현재 활성 목표입니다. 추천 가능 조건은 측정 완료와 활성 목표 설정입니다. 향후 서버 내부에서도 `summarizeAssessment`와 저장소의 `getActiveGoal`을 사용해 같은 입력을 얻을 수 있습니다.
+모든 호출에는 로그인 토큰을 사용합니다.
+
+| API | 요청 | 성공 응답 |
+| --- | --- | --- |
+| `POST /missions/recommend` | `{"date":"2026-11-27"}` | `200`과 `locked`, `needs_goal` 또는 `ready` 상태. `ready`에는 `missions` 목록이 있고 각 미션의 `id`는 서버가 발급합니다. |
+| `POST /missions/start` | `{"missionId":"<추천 응답의 id>"}` | `200`과 `{"mission": ...}`. 시작한 미션을 다시 요청해도 같은 조건을 반환합니다. |
+| `POST /runs` | `type: "mission"`, 시작 응답의 `mission.id`를 `missionId`로 지정, 기존 러닝 필드 | 처음 저장하면 `201`, 동일 기록 재전송은 `200`. |
+
+앱은 온라인에서 미션을 시작한 뒤 반환된 ID와 조건을 기기에 저장합니다. 달리는 동안 연결이 끊겨도 기록을 유지하고, 같은 계정으로 접속했을 때 같은 `clientRunId`와 `missionId`로 재전송합니다. 서버는 미션에 저장된 조건으로 판정하고 결과·러닝·훈련 상태를 한 트랜잭션에 반영합니다. 목표가 바뀐 뒤 이전 미션을 업로드하면 그 결과는 보존되지만 현재 훈련 상태는 갱신하지 않습니다.
+
+미션 ID가 없거나 다른 계정의 것이면 `404 mission_not_found`, 시작 전이면 `409 mission_not_started`, 완료한 미션에 새 기록을 올리면 `409 mission_already_completed`입니다. 동일 업로드 재전송은 예외로 기존 결과를 반환합니다.
 
 ## 테스트
 

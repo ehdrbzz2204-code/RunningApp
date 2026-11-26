@@ -85,13 +85,9 @@ reply(response, 200, body);
 
 ### 3. 미션 주행 판정
 
-지금 `POST /runs`는 `missionId`에 `null`만 받습니다. 미션 주행을 연결할 때는 서버가 다음 순서로 처리합니다.
+백엔드는 추천할 때 사용자별 미션의 조건을 저장하고 ID를 발급합니다. `POST /runs`로 미션 주행이 들어오면 해당 사용자가 시작한 미션의 저장된 조건으로 `evaluateMission`과 `applyMissionResult`를 호출합니다. 러닝·판정 결과·훈련 상태는 한 트랜잭션에서 처리하며, 동일한 `clientRunId`를 재전송하면 저장된 결과를 반환합니다.
 
-1. `missionId`가 오늘 그 사용자에게 추천한 미션인지 확인합니다. 같은 입력으로 `recommendMissions`를 다시 호출하면 같은 미션이 나오므로 따로 저장하지 않아도 검증할 수 있습니다.
-2. `evaluateMission(mission, run)` → `applyMissionResult(...)`를 호출하고 새 `trainingState`를 저장합니다.
-3. 응답에 `result`와 `feedback`을 포함해 앱 결과 화면에 보여줍니다.
-
-재전송된 같은 `clientRunId`는 판정을 다시 반영하면 안 됩니다. `saveRun`의 `created`가 `true`일 때만 2단계를 실행합니다.
+요청과 응답 형식은 [백엔드 API 명세](../backend/README.md#미션-로직-연동)를 참고하세요.
 
 ### 4. 목표 저장
 

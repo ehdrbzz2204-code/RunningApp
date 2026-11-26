@@ -6,6 +6,7 @@ import { createAuth, normalizeCredentials, normalizeRegistration } from "./auth.
 import { createAuthStorage } from "./auth-storage.mjs";
 import { assessmentRequirements, normalizeGoal, summarizeAssessment } from "./runner-profile.mjs";
 import { createStorage } from "./storage.mjs";
+import { createMissionService } from "./mission-service.mjs";
 
 const devTokens = new Map(Object.entries(JSON.parse(process.env.RUN_API_TOKENS ?? "{}")));
 if ([...devTokens].some(([token, user]) =>
@@ -20,6 +21,7 @@ const databasePath = resolve(process.env.RUN_DB_PATH ?? "backend/data/runs.db");
 mkdirSync(dirname(databasePath), { recursive: true });
 const db = new DatabaseSync(databasePath);
 const storage = createStorage(db);
+const missions = createMissionService(db, storage);
 const auth = createAuth(createAuthStorage(db));
 
 function reply(response, status, body) {
@@ -50,7 +52,7 @@ function normalizeRun(input) {
   if (!validId(clientRunId) ||
       !Number.isSafeInteger(distanceMeters) || distanceMeters < 0 ||
       !Number.isSafeInteger(movingSeconds) || movingSeconds <= 0 ||
-      !["free", "assessment"].includes(type) || missionId !== null) {
+      !(type === "mission" ? validId(missionId) : ["free", "assessment"].includes(type) && missionId === null)) {
     return null;
   }
   return { clientRunId, distanceMeters, movingSeconds, type, missionId };
@@ -126,6 +128,20 @@ const publicRoutes = new Map([
 ]);
 
 const routes = new Map([
+  ["POST /missions/recommend", withJsonBody((input) => {
+    const date = input?.date;
+    if (typeof date !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(date)) return null;
+    const parsed = new Date(date + "T00:00:00Z");
+    return Number.isFinite(parsed.getTime()) && parsed.toISOString().slice(0, 10) === date ? { date } : null;
+  }, "invalid_mission_date", (response, userId, { date }) => {
+    reply(response, 200, missions.recommend(userId, date));
+  })],
+  ["POST /missions/start", withJsonBody((input) => {
+    const id = input?.missionId;
+    return typeof id === "string" && /^[a-f0-9-]{36}$/.test(id) ? { id } : null;
+  }, "invalid_mission_id", (response, userId, { id }) => {
+    reply(response, 200, { mission: missions.start(userId, id) });
+  })],
   ["GET /auth/me", (_request, response, _userId, sessionUser) => {
     if (!sessionUser) {
       reply(response, 401, { error: "unauthorized" });
@@ -142,6 +158,11 @@ const routes = new Map([
     response.writeHead(204, { "Cache-Control": "no-store" }).end();
   }],
   ["POST /runs", withJsonBody(normalizeRun, "invalid_run", (response, userId, run) => {
+    if (run.type === "mission") {
+      const saved = missions.saveRun(userId, run);
+      reply(response, saved.created ? 201 : 200, { ...saved.run, missionResult: saved.missionResult });
+      return;
+    }
     const saved = storage.saveRun(userId, run);
     if (!saved) {
       reply(response, 409, { error: "client_run_id_conflict" });
@@ -184,6 +205,11 @@ const server = createServer(async (request, response) => {
     }
     await handle(request, response, userId, sessionUser, token);
   } catch (error) {
+    if (error.missionError) {
+      const { status, code } = error.missionError;
+      reply(response, status, { error: code });
+      return;
+    }
     console.error("Failed to handle request:", error.code);
     reply(response, 500, { error: "storage_error" });
   }
