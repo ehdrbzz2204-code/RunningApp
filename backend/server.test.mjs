@@ -220,3 +220,101 @@ test("registered accounts keep distinct data and can revoke or expire their sess
     assert.deepEqual(await (await request("/goals/active", signedBackIn.accessToken)).json(), { goal });
   }, { enableDevTokens: false });
 });
+
+test("mission results use the original conditions and apply only once after retry", async () => {
+  await withServer(async ({ request, upload, restart, databasePath }) => {
+    const date = "2026-11-27";
+    const recommend = () => request("/missions/recommend", token, "POST", { date });
+    assert.equal((await (await recommend()).json()).status, "locked");
+    for (let i = 0; i < 3; i++) {
+      assert.equal((await upload(token, { ...run, clientRunId: `assessment-${i}` })).status, 201);
+    }
+    assert.equal((await (await recommend()).json()).status, "needs_goal");
+    const goal = { type: "distance", targetDistanceMeters: 5000 };
+    await request("/goals/active", token, "PUT", goal);
+    const { missions } = await (await recommend()).json();
+    const [mission, second] = missions;
+    assert.deepEqual((await (await recommend()).json()).missions, missions);
+    const start = (bearer, id) => request("/missions/start", bearer, "POST", { missionId: id });
+    assert.equal((await start(otherToken, mission.id)).status, 404);
+
+    const missionRun = {
+      clientRunId: "offline-mission", type: "mission", missionId: mission.id,
+      distanceMeters: mission.targetDistanceMeters,
+      movingSeconds: Math.floor(mission.targetDistanceMeters * mission.recommendedPaceSecondsPerKm / 1000),
+    };
+    assert.equal((await upload(token, missionRun)).status, 409);
+    assert.equal((await start(token, mission.id)).status, 200);
+    assert.equal((await upload(otherToken, missionRun)).status, 404);
+    const replays = await Promise.all([upload(token, missionRun), upload(token, missionRun)]);
+    assert.deepEqual(replays.map((response) => response.status).sort(), [200, 201]);
+    const [first, retry] = await Promise.all(replays.map((response) => response.json()));
+    assert.deepEqual(first, retry);
+    assert.equal(first.missionResult.outcome, "success");
+    assert.equal((await upload(token, { ...missionRun, clientRunId: "second-attempt" })).status, 409);
+    assert.equal((await upload(token, { ...missionRun, movingSeconds: missionRun.movingSeconds + 1 })).status, 409);
+
+    assert.equal((await start(token, second.id)).status, 200);
+    await request("/goals/active", token, "PUT", { ...goal, targetDistanceMeters: 8000 });
+    const failedRun = { ...missionRun, clientRunId: "late-mission", missionId: second.id, distanceMeters: 0 };
+    const late = await upload(token, failedRun);
+    assert.equal(late.status, 201);
+    assert.equal((await late.json()).missionResult.outcome, "failed");
+    await restart();
+    assert.deepEqual(await (await upload(token, missionRun)).json(), first);
+
+    const db = new DatabaseSync(databasePath);
+    try {
+      const { payload } = db.prepare("SELECT payload FROM mission_training WHERE user_id = 'one'").get();
+      assert.equal(JSON.parse(payload).completedMissionCount, 1);
+      assert.equal(db.prepare("SELECT count(*) AS count FROM runs WHERE client_run_id = 'second-attempt'").get().count, 0);
+    } finally {
+      db.close();
+    }
+  });
+});
+
+test("next recommendations differ after successful and unsuccessful mission streaks", async () => {
+  await withServer(async ({ request, upload, restart }) => {
+    const recommend = async (bearer, date) => {
+      const response = await request("/missions/recommend", bearer, "POST", { date });
+      assert.equal(response.status, 200);
+      const recommendation = await response.json();
+      assert.equal(recommendation.status, "ready");
+      return recommendation.missions;
+    };
+    const goal = { type: "distance", targetDistanceMeters: 5000 };
+    for (const bearer of [token, otherToken]) {
+      for (let i = 0; i < 3; i++) {
+        assert.equal((await upload(bearer, { ...run, clientRunId: `assessment-${i}` })).status, 201);
+      }
+      assert.equal((await request("/goals/active", bearer, "PUT", goal)).status, 200);
+    }
+    const [initial] = await recommend(token, "2026-11-24");
+
+    for (const date of ["2026-11-24", "2026-11-25"]) {
+      for (const [bearer, succeeds] of [[token, true], [otherToken, false]]) {
+        const [mission] = await recommend(bearer, date);
+        const started = await request("/missions/start", bearer, "POST", { missionId: mission.id });
+        assert.equal(started.status, 200);
+        const response = await upload(bearer, {
+          type: "mission",
+          missionId: mission.id,
+          clientRunId: `mission-${date}`,
+          distanceMeters: succeeds ? mission.targetDistanceMeters : 0,
+          movingSeconds: Math.floor(mission.targetDistanceMeters * mission.recommendedPaceSecondsPerKm / 1000),
+        });
+        assert.equal(response.status, 201);
+        assert.equal((await response.json()).missionResult.outcome, succeeds ? "success" : "failed");
+      }
+    }
+
+    await restart();
+    const afterSuccess = await recommend(token, "2026-11-26");
+    const afterFailure = await recommend(otherToken, "2026-11-26");
+    assert.equal(afterSuccess.length, 2);
+    assert.equal(afterSuccess[0].targetDistanceMeters, initial.targetDistanceMeters + 250);
+    assert.equal(afterFailure.length, 1);
+    assert.ok(afterFailure[0].targetDistanceMeters < initial.targetDistanceMeters);
+  });
+});
