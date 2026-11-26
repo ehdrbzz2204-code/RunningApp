@@ -7,7 +7,7 @@ import { createAuthStorage } from "./auth-storage.mjs";
 import { assessmentRequirements, normalizeGoal, summarizeAssessment } from "./runner-profile.mjs";
 import { createStorage } from "./storage.mjs";
 import { createMissionService } from "./mission-service.mjs";
-import { createRunHistory, normalizeFinishedAt, readHistoryQuery } from "./run-history.mjs";
+import { createRunHistory, normalizeFinishedAt, readHistoryQuery, readStatsQuery } from "./run-history.mjs";
 
 const devTokens = new Map(Object.entries(JSON.parse(process.env.RUN_API_TOKENS ?? "{}")));
 if ([...devTokens].some(([token, user]) =>
@@ -23,7 +23,7 @@ mkdirSync(dirname(databasePath), { recursive: true });
 const db = new DatabaseSync(databasePath);
 const storage = createStorage(db);
 const missions = createMissionService(db, storage);
-const listRuns = createRunHistory(db);
+const runHistory = createRunHistory(db);
 const auth = createAuth(createAuthStorage(db));
 
 function reply(response, status, body) {
@@ -136,12 +136,20 @@ const publicRoutes = new Map([
 const routes = new Map([
   ["GET /runs", (request, response, userId) => {
     const query = readHistoryQuery(request.url.slice("/runs".length));
-    const page = query && listRuns(userId, query);
+    const page = query && runHistory.list(userId, query);
     if (!page) {
       reply(response, 400, { error: "invalid_history_query" });
       return;
     }
     reply(response, 200, page);
+  }],
+  ["GET /stats", (request, response, userId) => {
+    const query = readStatsQuery(request.url.slice("/stats".length));
+    if (!query) {
+      reply(response, 400, { error: "invalid_stats_query" });
+      return;
+    }
+    reply(response, 200, runHistory.stats(userId, query));
   }],
   ["POST /missions/recommend", withJsonBody((input) => {
     const date = input?.date;
@@ -199,9 +207,11 @@ const routes = new Map([
 ]);
 
 const server = createServer(async (request, response) => {
-  const route = request.method === "GET" && request.url.startsWith("/runs?")
-    ? "GET /runs"
-    : `${request.method} ${request.url}`;
+  const path = request.url.split("?", 1)[0];
+  const target = request.method === "GET" && (path === "/runs" || path === "/stats")
+    ? path
+    : request.url;
+  const route = `${request.method} ${target}`;
   const publicHandler = publicRoutes.get(route);
   const handle = routes.get(route);
   if (!publicHandler && !handle) {

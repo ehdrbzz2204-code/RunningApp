@@ -98,6 +98,27 @@ node backend/server.mjs
 
 실제 종료 시각이 최신인 기록부터 반환합니다. 시각이 같으면 서버 기록 ID로 정렬 순서를 고정합니다. 실제 종료 시각이 없는 과거 기록은 목록 뒤에 `finishedAt: null`로 표시됩니다.
 
+## 주간·월간 러닝 통계
+
+`GET /stats?period=week&date=2026-11-27`은 Bearer 토큰에 해당하는 계정의 기간별 합계를 반환합니다. `period`는 `week` 또는 `month`이며, `date`는 보고 싶은 기간에 속하는 날짜(`YYYY-MM-DD`)입니다. 생략하면 한국 시간의 오늘을 사용합니다. 잘못된 기간이나 날짜는 `400 invalid_stats_query`를 반환합니다.
+
+```json
+{
+  "period": "week",
+  "timeZone": "Asia/Seoul",
+  "startDate": "2026-11-23",
+  "endDateExclusive": "2026-11-30",
+  "runCount": 2,
+  "totalDistanceMeters": 4000,
+  "totalMovingSeconds": 1620,
+  "averagePaceSecondsPerKm": 405
+}
+```
+
+한국 시간 기준으로 주간은 월요일 00시부터 다음 월요일 00시 전까지, 월간은 매월 1일 00시부터 다음 달 1일 00시 전까지 집계합니다. 기간은 업로드 시점과 관계없이 `finishedAt`으로 결정합니다. 시각이 없는 기록은 목록에서 조회할 수 있으며 기간별 합계에서는 제외됩니다.
+
+평균 페이스는 총 이동 시간(초)을 총 거리(km)로 나눠 반올림합니다. 기록이 없으면 합계는 0이고, 총 거리가 0이면 평균 페이스는 `null`입니다.
+
 ## 초기 체력 측정
 
 `GET /assessment`는 인증된 사용자의 초기 측정 진행률을 반환합니다. 초기 측정으로 저장한 주행(`type: "assessment"`) 중 3,000m 이상인 기록만 집계합니다. 동일 러닝의 재전송은 한 번만 집계합니다.

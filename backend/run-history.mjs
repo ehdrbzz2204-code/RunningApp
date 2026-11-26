@@ -22,6 +22,44 @@ export function readHistoryQuery(search) {
   return { limit: Number(limit), cursor };
 }
 
+const koreaOffsetMs = 9 * 60 * 60 * 1000;
+
+export function readStatsQuery(search, now = Date.now()) {
+  const query = new URLSearchParams(search);
+  const period = query.get("period");
+  const date = query.get("date") ?? new Date(now + koreaOffsetMs).toISOString().slice(0, 10);
+  if ((period !== "week" && period !== "month") || !/^\d{4}-\d{2}-\d{2}$/.test(date) ||
+      query.getAll("period").length !== 1 || query.getAll("date").length > 1) return null;
+
+  const midnight = normalizeFinishedAt(date + "T00:00:00Z");
+  if (midnight === null) return null;
+  const start = new Date(midnight);
+  if (period === "week") {
+    start.setUTCDate(start.getUTCDate() - (start.getUTCDay() + 6) % 7);
+  } else {
+    start.setUTCDate(1);
+  }
+  const end = new Date(start);
+  if (period === "week") {
+    end.setUTCDate(end.getUTCDate() + 7);
+  } else {
+    end.setUTCMonth(end.getUTCMonth() + 1);
+  }
+
+  const from = new Date(start.getTime() - koreaOffsetMs).toISOString();
+  const to = new Date(end.getTime() - koreaOffsetMs).toISOString();
+  if (start.toISOString().length !== 24 || end.toISOString().length !== 24 ||
+      from.length !== 24 || to.length !== 24) return null;
+  return {
+    period,
+    timeZone: "Asia/Seoul",
+    startDate: start.toISOString().slice(0, 10),
+    endDateExclusive: end.toISOString().slice(0, 10),
+    from,
+    to,
+  };
+}
+
 export function createRunHistory(db) {
   db.exec(`
     CREATE INDEX IF NOT EXISTS runs_history_order
@@ -40,8 +78,15 @@ export function createRunHistory(db) {
   const order = `ORDER BY ${sortTime} DESC, runs.id DESC LIMIT ?`;
   const firstPage = db.prepare(`${select} ${order}`);
   const nextPage = db.prepare(`${select} AND (${sortTime}, runs.id) < (?, ?) ${order}`);
+  const summarize = db.prepare(`
+    SELECT count(*) AS runCount,
+           total(json_extract(payload, '$.distanceMeters')) AS totalDistanceMeters,
+           total(json_extract(payload, '$.movingSeconds')) AS totalMovingSeconds
+    FROM runs
+    WHERE user_id = ? AND ${sortTime} >= ? AND ${sortTime} < ?
+  `);
 
-  return (userId, { limit, cursor }) => {
+  function list(userId, { limit, cursor }) {
     const anchor = cursor === null ? null : findCursor.get(userId, cursor);
     if (cursor !== null && !anchor) return null;
 
@@ -61,5 +106,19 @@ export function createRunHistory(db) {
       };
     });
     return { items, nextCursor: rows.length > limit ? items.at(-1).id : null };
-  };
+  }
+
+  function stats(userId, { from, to, ...period }) {
+    const totals = summarize.get(userId, from, to);
+    const { totalDistanceMeters, totalMovingSeconds } = totals;
+    return {
+      ...period,
+      ...totals,
+      averagePaceSecondsPerKm: totalDistanceMeters > 0
+        ? Math.round(totalMovingSeconds / (totalDistanceMeters / 1000))
+        : null,
+    };
+  }
+
+  return { list, stats };
 }
