@@ -51,6 +51,8 @@ internal fun RunningApp(
     var assessmentRun by rememberSaveable { mutableStateOf(true) }
     var resultJson by rememberSaveable(session?.userId) { mutableStateOf<String?>(null) }
     var starting by remember { mutableStateOf(false) }
+    var pendingRuns by remember(repo) { mutableStateOf(repo?.pendingRuns().orEmpty()) }
+    var lastSync by remember(repo) { mutableLongStateOf(repo?.lastSyncMillis() ?: 0L) }
     LaunchedEffect(repo,refresh) {
         if(repo==null) return@LaunchedEffect
         do {
@@ -60,7 +62,9 @@ internal fun RunningApp(
                 data=repo.load()
             } catch(e:java.io.IOException) { error=e.message }
             catch(e:org.json.JSONException) { error="서버 응답을 읽지 못했어요." }
-            if(repo.pending()==0) break
+            pendingRuns = repo.pendingRuns()
+            lastSync = repo.lastSyncMillis()
+            if(pendingRuns.isEmpty()) break
             delay(30000)
         } while(true)
     }
@@ -201,6 +205,7 @@ internal fun RunningApp(
                     if(repo!=null && repo.pending()>0) Label("기기 저장 · 전송 대기 "+repo.pending()+"건")
                     val current=data
                     if (current==null) {
+                        if(tab == "마이") TextButton({ dialog = "오프라인 기록 및 동기화" }) { Text("오프라인 기록 및 동기화") }
                         if(error==null) Label("러닝 정보를 불러오는 중이에요.")
                         Action("3km 자유 주행 시작"){startWithPermission("3km 자유 주행")}
                         TextButton({dialog="로그아웃"}){Text("로그아웃")}
@@ -230,6 +235,36 @@ internal fun RunningApp(
 
     dialog?.let { title ->
         when (title) {
+            "오프라인 기록 및 동기화" -> AlertDialog(
+                onDismissRequest = { dialog = null },
+                title = { Text(title) },
+                text = {
+                    val formatter = remember { java.text.DateFormat.getDateTimeInstance() }
+                    Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                        Label("마지막 동기화 · " + if (lastSync > 0) formatter.format(java.util.Date(lastSync)) else "확인된 시각 없음")
+                        Label("전송 대기 " + pendingRuns.size + "건", 16, true)
+                        if (pendingRuns.isEmpty()) Label("전송을 기다리는 러닝 기록이 없어요.")
+                        pendingRuns.forEach { run ->
+                            val type = when (run.optString("type")) {
+                                "mission" -> "미션 러닝"
+                                "assessment" -> "초기 체력 측정"
+                                else -> "자유 주행"
+                            }
+                            val finished = run.optString("finishedAt")
+                            val parser = java.text.SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSSX", Locale.ROOT)
+                            val time = runCatching { formatter.format(requireNotNull(parser.parse(finished))) }.getOrDefault(finished)
+                            val seconds = run.optInt("movingSeconds")
+                            Column {
+                                Label(type + " · " + time)
+                                Label(km(run.optInt("distanceMeters")) + " km · " + seconds / 60 + "분 " + seconds % 60 + "초")
+                            }
+                        }
+                        error?.let { Label(it) }
+                    }
+                },
+                confirmButton = { TextButton({ dialog = null }) { Text("닫기") } },
+                dismissButton = { TextButton({ refresh++ }) { Text("다시 동기화") } }
+            )
             "러닝 종료" -> EndRunDialog(
                 dismiss = { dialog = null },
                 save = {
@@ -237,6 +272,7 @@ internal fun RunningApp(
                     if (!snapshot.clientRunId.isBlank() && serviceState.isActive && repo!=null) {
                         try { resultJson = repo.enqueue(snapshot,activeMission,assessmentRun) }
                         catch(e:IllegalStateException){dialog=e.message;return@EndRunDialog}
+                        pendingRuns = repo.pendingRuns()
                         refresh++
                     }
                     sendServiceAction(TrackingService.ACTION_STOP, null)

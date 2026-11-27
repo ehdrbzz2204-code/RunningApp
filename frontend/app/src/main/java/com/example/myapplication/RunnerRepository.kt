@@ -51,6 +51,9 @@ internal class RunnerRepository(context: Context, private val session: SavedSess
             queue.edit().remove(id).apply()
         }
     }
+    fun pendingRuns() = queue.all.values.map { JSONObject(it as String) }
+        .sortedByDescending { it.getString("finishedAt") }
+    fun lastSyncMillis() = cache.getLong("lastSyncMillis", 0L)
     fun pending() = queue.all.size
     suspend fun start(id:String) = api.accountJson(token,"/missions/start","POST",JSONObject().put("missionId",id)).getJSONObject("mission")
     suspend fun goal(distance:Boolean,value:Int): JSONObject {
@@ -76,7 +79,7 @@ internal class RunnerRepository(context: Context, private val session: SavedSess
             .put("month",month).put("goal",goal).put("missions",offers ?: org.json.JSONArray())
             .put("history",org.json.JSONArray(history))
         val result=decode(json)
-        cache.edit().putString("dashboard",json.toString()).apply()
+        cache.edit().putString("dashboard",json.toString()).putLong("lastSyncMillis", System.currentTimeMillis()).apply()
         return result
     }
 }
