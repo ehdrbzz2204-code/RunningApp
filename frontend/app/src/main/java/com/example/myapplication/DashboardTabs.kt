@@ -91,7 +91,7 @@ internal fun RecordsContent(data: RunnerData) {
             Label("홈에서 첫 3km 자유 주행을 시작해 보세요.",13,false,Muted)
         } else {
             data.history.forEach { run -> Label(if(run.isNull("finishedAt")) "이전 기록" else run.getString("finishedAt").take(10),16,true)
-            Label(km(run.getInt("distanceMeters"))+" km · "+run.getInt("movingSeconds")+"초",14); run.optJSONObject("missionResult")?.optJSONObject("feedback")?.let { Label(it.optString("title")) }; HorizontalDivider() }
+            Label(km(run.getInt("distanceMeters"))+" km · "+run.getInt("movingSeconds")+"초",14); run.optJSONObject("missionResult")?.let { MissionFeedback(it) }; HorizontalDivider() }
         }
     }
 }
@@ -132,5 +132,6 @@ internal fun RecordsContent(data: RunnerData) {
     ){ Label("로그아웃",14,true,Color(0xff9e2a2b)) }
 
 }
+
 
 

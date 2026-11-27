@@ -46,8 +46,7 @@ internal fun RunResultScreen(
             val result = synced?.optJSONObject("missionResult")
             CardBox {
                 Label("미션 결과",16,true)
-                Label(result?.optJSONObject("feedback")?.optString("title")?.takeIf { it.isNotBlank() }
-                    ?: "서버 확인 후 결과가 표시돼요.")
+                if (result != null) MissionFeedback(result) else Label("서버 확인 후 결과가 표시돼요.")
             }
         }
         Label(when { synced != null -> "서버 저장 완료"; pending -> "기기에 저장됨 · 서버 전송 대기"; else -> "기기에 저장됨 · 서버 결과 확인 중" },13,false,Muted)
@@ -60,4 +59,30 @@ internal fun RunResultScreen(
 private fun HorizontalResultMetrics(seconds: Long, pace: Int?) {
     Stats(listOf(String.format(Locale.ROOT,"%d:%02d",seconds / 60, seconds % 60) to "러닝 시간",
         PaceCalculator.formatPace(pace) to "평균 페이스"))
+}
+
+
+@Composable
+internal fun MissionFeedback(result: JSONObject) {
+    val feedback = result.optJSONObject("feedback")
+    val title = feedback?.optString("title").orEmpty().ifBlank {
+        when (result.optString("outcome")) {
+            "success" -> "미션 성공"
+            "failed" -> "미션 미달성"
+            else -> "미션 결과"
+        }
+    }
+    Label(title, 18, true)
+    feedback?.optString("message")?.takeIf { it.isNotBlank() }?.let { Label(it) }
+    val reason = when (result.optString("failReason")) {
+        "distance_short" -> "목표 거리 기준을 채우지 못했어요."
+        "pace_too_slow" -> "목표 페이스 기준을 충족하지 못했어요."
+        "both" -> "거리와 페이스 기준을 모두 충족하지 못했어요."
+        else -> null
+    }
+    reason?.let { Label("미달성 사유 · $it", 14) }
+    feedback?.optString("nextHint")?.takeIf { it.isNotBlank() }?.let {
+        Label("다음 훈련", 13, true, Muted)
+        Label(it)
+    }
 }
