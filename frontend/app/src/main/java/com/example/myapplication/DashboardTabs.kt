@@ -78,23 +78,6 @@ internal fun MissionContent(recommendation: DashboardMission?, start: (String)->
     }
 }
 
-@Composable
-internal fun RecordsContent(data: RunnerData) {
-    CardBox(Ink) {
-        Label("이번 달 총 거리",12,false,Color.LightGray)
-        Label(km(data.month.getInt("totalDistanceMeters"))+" km",32,true,Color.White)
-    }
-    HomeHeading("최근 활동","러닝 기록")
-    CardBox {
-        if (data.history.isEmpty()) {
-            Label("아직 러닝 기록이 없어요",16,true)
-            Label("홈에서 첫 3km 자유 주행을 시작해 보세요.",13,false,Muted)
-        } else {
-            data.history.forEach { run -> Label(if(run.isNull("finishedAt")) "이전 기록" else run.getString("finishedAt").take(10),16,true)
-            Label(km(run.getInt("distanceMeters"))+" km · "+run.getInt("movingSeconds")+"초",14); run.optJSONObject("missionResult")?.let { MissionFeedback(it) }; HorizontalDivider() }
-        }
-    }
-}
 @Composable private fun Pill(title:String) {
     Box(Modifier.border(1.dp,Line,CircleShape).padding(horizontal=11.dp,vertical=5.dp)){Label(title,11,false,Muted)}
 }
@@ -132,6 +115,7 @@ internal fun RecordsContent(data: RunnerData) {
     ){ Label("로그아웃",14,true,Color(0xff9e2a2b)) }
 
 }
+
 
 
 
