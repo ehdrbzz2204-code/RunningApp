@@ -53,10 +53,10 @@ internal class RunnerRepository(context: Context, private val session: SavedSess
     }
     fun pending() = queue.all.size
     suspend fun start(id:String) = api.accountJson(token,"/missions/start","POST",JSONObject().put("missionId",id)).getJSONObject("mission")
-    suspend fun goal(distance:Boolean,value:Int) {
+    suspend fun goal(distance:Boolean,value:Int): JSONObject {
         val json=JSONObject().put("type",if(distance)"distance" else "pace")
             .put(if(distance)"targetDistanceMeters" else "targetPaceSecondsPerKm",value)
-        api.accountJson(token,"/goals/active","PUT",json)
+        return api.accountJson(token,"/goals/active","PUT",json).getJSONObject("goal")
     }
     suspend fun load(): RunnerData {
         val assessment=api.accountJson(token,"/assessment")
@@ -90,6 +90,7 @@ internal fun parseMission(json:JSONObject) = com.example.myapplication.mission.M
     if(json.isNull("minPaceSecondsPerKm")) null else json.getInt("minPaceSecondsPerKm"),
     json.getInt("recommendedPaceSecondsPerKm")
 )
+
 
 
 

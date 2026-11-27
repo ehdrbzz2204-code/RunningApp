@@ -244,8 +244,9 @@ internal fun RunningApp(
                     dialog = null
                 }
             )
-            "나의 러닝 목표" -> GoalDialog({dialog=null}) { distance,value ->
-                repo?.goal(distance,value)
+            "나의 러닝 목표" -> GoalDialog(data?.goal, {dialog=null}) { distance,value ->
+                val saved = requireNotNull(repo).goal(distance,value)
+                data = data?.copy(goal = saved)
                 dialog=null
                 refresh++
             }
@@ -274,4 +275,5 @@ private fun clock(ms: Long) = String.format(Locale.ROOT, "%02d:%02d", ms / 60000
 internal fun RunningApp(recommendation: MissionRecommendation) {
     RunningApp(session = null, onLogout = {}, recommendation = recommendation)
 }
+
 

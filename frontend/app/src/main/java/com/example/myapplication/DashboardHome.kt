@@ -53,6 +53,11 @@ import androidx.compose.ui.unit.*
             Box(Modifier.fillMaxWidth(),contentAlignment=Alignment.Center){Label("걷거나 쉬어도 괜찮아요. 나의 페이스 그대로 기록해요.",11)}
         }
     }
+    data.goal?.let { goal ->
+        CardBox {
+            HomeHeading("현재 러닝 목표", goalSummary(goal))
+        }
+    }
     Spacer(Modifier.height(1.dp))
     Row(Modifier.fillMaxWidth(),verticalAlignment=Alignment.Bottom,horizontalArrangement=Arrangement.SpaceBetween){
         HomeHeading("이번 주","차곡차곡 쌓인 러닝")
@@ -86,5 +91,6 @@ import androidx.compose.ui.unit.*
         Label("›",22)
     }
 }
+
 
 
