@@ -142,6 +142,18 @@ internal class AuthApiClient(
             }
         }
 
+    suspend fun accountJson(token: String, path: String, method: String = "GET", body: JSONObject? = null): JSONObject =
+        withContext(Dispatchers.IO) {
+            val response = requestJson(path, method, body?.toString(), token)
+            if (response.statusCode !in 200..299) {
+                throw java.io.IOException(response.networkError ?: when (response.statusCode) {
+                    401 -> "로그인 세션이 만료됐어요. 다시 로그인해 주세요."
+                    else -> "요청 실패: " + (parseErrorCode(response.rawBody) ?: response.statusCode)
+                })
+            }
+            JSONObject(response.rawBody.orEmpty())
+        }
+
     private data class RawHttpResponse(
         val statusCode: Int,
         val rawBody: String?,

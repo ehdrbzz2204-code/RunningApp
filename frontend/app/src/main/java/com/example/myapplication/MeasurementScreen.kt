@@ -59,6 +59,7 @@ internal fun MeasurementScreen(
     toggle: () -> Unit,
     reset: () -> Unit = {},
     recenterTrigger: Int = 0,
+    mission: com.example.myapplication.mission.Mission? = null,
 ) {
     val distanceKmText = if (trackingState.distanceMeters <= 0.0) {
         "—"
@@ -109,6 +110,11 @@ internal fun MeasurementScreen(
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(5.dp)) {
                     Spacer(Modifier.size(7.dp).background(if (trackingState.isPaused) Muted else Color(0xff79c75e), CircleShape))
                     Label(statusText, 10, true, Muted)
+                }
+                mission?.let {
+                    val progress = com.example.myapplication.mission.MissionLogic.trackMission(it,trackingState.distanceMeters,secTotal,trackingState.points.isNotEmpty())
+                    LinearProgressIndicator(progress={progress.progress},modifier=Modifier.fillMaxWidth(),color=Lime)
+                    Label("남은 거리 "+km(progress.remainingMeters)+" km · 목표 "+PaceCalculator.formatPace(it.recommendedPaceSecondsPerKm),12)
                 }
                 Label("현재 거리", 11, false, Muted)
                 Row(verticalAlignment = Alignment.Bottom) {
@@ -178,6 +184,7 @@ private fun MapLibreRunMapView(
     modifier: Modifier = Modifier,
     points: List<TrackPoint>,
     recenterTrigger: Int = 0,
+    mission: com.example.myapplication.mission.Mission? = null,
 ) {
     val context = LocalContext.current
     var mapLibreMap by remember { mutableStateOf<MapLibreMap?>(null) }

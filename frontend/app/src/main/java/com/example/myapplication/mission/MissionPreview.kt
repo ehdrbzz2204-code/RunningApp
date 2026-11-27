@@ -40,7 +40,7 @@ import com.example.myapplication.Mist
 import com.example.myapplication.MissionRecommendation
 import com.example.myapplication.Muted
 import com.example.myapplication.Paper
-import com.example.myapplication.RunningApp
+import com.example.myapplication.MissionContent
 import kotlin.math.roundToInt
 
 /*
@@ -252,5 +252,6 @@ private fun MissionPlaygroundPreview() {
 private fun AppWithMissionPreview() {
     val assessment = MissionLogic.summarizeAssessment(List(3) { RunInput(3000, 1296) })
     val first = (MissionLogic.recommendMissions(assessment, Goal.Distance(5000), null, "2026-11-26") as Recommendation.Ready).missions[0]
-    MaterialTheme(colorScheme = previewColors) { RunningApp(MissionRecommendation(first.title, first.description)) }
+    MaterialTheme(colorScheme = previewColors) { MissionContent(MissionRecommendation(first.title, first.description), {}, 3) }
 }
+
