@@ -49,6 +49,7 @@ internal fun RunningApp(
     var activeMission by rememberSaveable { mutableStateOf<String?>(null) }
     var missionDetails by rememberSaveable { mutableStateOf<String?>(null) }
     var assessmentRun by rememberSaveable { mutableStateOf(true) }
+    var resultJson by rememberSaveable(session?.userId) { mutableStateOf<String?>(null) }
     var starting by remember { mutableStateOf(false) }
     LaunchedEffect(repo,refresh) {
         if(repo==null) return@LaunchedEffect
@@ -116,14 +117,14 @@ internal fun RunningApp(
         },
     )
 
-    BackHandler(enabled = dialog == null && (measuring || tab != "홈")) {
-        if (measuring) measuring = false else tab = "홈"
+    BackHandler(enabled = dialog == null && (resultJson != null || measuring || tab != "홈")) {
+        if (resultJson != null) resultJson = null else if (measuring) measuring = false else tab = "홈"
     }
 
     Scaffold(
         containerColor = Paper,
         bottomBar = {
-            if (!measuring) Row(Modifier.fillMaxWidth().background(Color.White).navigationBarsPadding()) {
+            if (!measuring && resultJson == null) Row(Modifier.fillMaxWidth().background(Color.White).navigationBarsPadding()) {
                 listOf("홈", "미션", "기록", "마이").forEach { name ->
                     Column(
                         Modifier.weight(1f).clickable { tab = name }.padding(bottom = 8.dp),
@@ -139,7 +140,12 @@ internal fun RunningApp(
         }
     ) { pad ->
         key(tab, measuring) {
-            if (measuring) {
+            val finished = resultJson
+            if (finished != null) {
+                val run = remember(finished) { org.json.JSONObject(finished) }
+                RunResultScreen(Modifier.padding(pad), run, data, repo?.isPending(run.getString("clientRunId")) == true,
+                    error, retry = { refresh++ }, close = { resultJson = null })
+            } else if (measuring) {
                 var recenterTick by remember { mutableIntStateOf(0) }
 
                 Column(Modifier.fillMaxSize().padding(pad)) {
@@ -229,7 +235,7 @@ internal fun RunningApp(
                 save = {
                     val snapshot = serviceState.copy(isActive = false, isPaused = false)
                     if (!snapshot.clientRunId.isBlank() && serviceState.isActive && repo!=null) {
-                        try { repo.enqueue(snapshot,activeMission,assessmentRun) }
+                        try { resultJson = repo.enqueue(snapshot,activeMission,assessmentRun) }
                         catch(e:IllegalStateException){dialog=e.message;return@EndRunDialog}
                         refresh++
                     }
@@ -268,3 +274,4 @@ private fun clock(ms: Long) = String.format(Locale.ROOT, "%02d:%02d", ms / 60000
 internal fun RunningApp(recommendation: MissionRecommendation) {
     RunningApp(session = null, onLogout = {}, recommendation = recommendation)
 }
+
