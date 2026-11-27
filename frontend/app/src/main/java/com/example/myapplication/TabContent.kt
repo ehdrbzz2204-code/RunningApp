@@ -48,7 +48,7 @@ private fun TileIcon(kind: String, background: Color, tint: Color = Muted, size:
 }
 
 @Composable
-internal fun MissionContent(recommendation: MissionRecommendation?, start: (String)->Unit, completed: Int) {
+internal fun MissionContent(recommendation: MissionRecommendation?, start: (String)->Unit) {
     Column(Modifier.fillMaxWidth().background(Mist,RoundedCornerShape(24.dp)).padding(20.dp),
         horizontalAlignment=Alignment.CenterHorizontally,verticalArrangement=Arrangement.spacedBy(12.dp)) {
         Box(Modifier.size(104.dp),contentAlignment=Alignment.Center) {
@@ -60,12 +60,12 @@ internal fun MissionContent(recommendation: MissionRecommendation?, start: (Stri
             Box(Modifier.rotate(-5f)){TileIcon(if(recommendation==null)"lock" else "goal",Lime,Ink,60)}
         }
         Box(Modifier.background(Ink.copy(.07f),CircleShape).padding(horizontal=12.dp,vertical=5.dp)){
-            Label(if(recommendation==null)"${3-completed}회 남음" else "오늘의 미션",11,true)
+            Label(if(recommendation==null)"3회 남음" else "오늘의 미션",11,true)
         }
         Label(recommendation?.title?:"맞춤 미션을 준비하고 있어요",19)
-        Text(recommendation?.description?:"남은 초기 측정을 완료하면\n러닝 수준을 분석해 첫 미션을 알려드려요.",
+        Text(recommendation?.description?:"3km 자유 주행을 세 번 완료하면\n러닝 수준을 분석해 첫 미션을 알려드려요.",
             color=Muted,fontSize=13.sp,lineHeight=20.sp,textAlign=TextAlign.Center)
-        Action(if(recommendation==null)"3km 측정 시작하기" else "이 훈련을 미션으로 시작"){start(recommendation?.title?:"3km 자유 주행")}
+        Action(if(recommendation==null)"첫 측정 시작하기" else "이 훈련을 미션으로 시작"){start(recommendation?.title?:"3km 자유 주행")}
     }
     HomeHeading("미리 보기","이런 미션을 만나게 돼요")
     Column(verticalArrangement=Arrangement.spacedBy(9.dp)){
@@ -79,26 +79,26 @@ internal fun MissionContent(recommendation: MissionRecommendation?, start: (Stri
 }
 
 @Composable
-internal fun RecordsContent(data: RunnerData) {
+internal fun RecordsContent(lastRun: String?) {
     CardBox(Ink) {
         Label("이번 달 총 거리",12,false,Color.LightGray)
-        Label(km(data.month.getInt("totalDistanceMeters"))+" km",32,true,Color.White)
+        Label("0 km",32,true,Color.White)
     }
     HomeHeading("최근 활동","러닝 기록")
     CardBox {
-        if (data.history.isEmpty()) {
+        if (lastRun == null) {
             Label("아직 러닝 기록이 없어요",16,true)
             Label("홈에서 첫 3km 자유 주행을 시작해 보세요.",13,false,Muted)
         } else {
-            data.history.forEach { run -> Label(if(run.isNull("finishedAt")) "이전 기록" else run.getString("finishedAt").take(10),16,true)
-            Label(km(run.getInt("distanceMeters"))+" km · "+run.getInt("movingSeconds")+"초",14); run.optJSONObject("missionResult")?.optJSONObject("feedback")?.let { Label(it.optString("title")) }; HorizontalDivider() }
+            Label("최근 러닝 미리보기",16,true)
+            Label("러닝 시간 · $lastRun",14)
         }
     }
 }
 @Composable private fun Pill(title:String) {
     Box(Modifier.border(1.dp,Line,CircleShape).padding(horizontal=11.dp,vertical=5.dp)){Label(title,11,false,Muted)}
 }
-@Composable internal fun ProfileContent(name: String?, email: String?, data: RunnerData, open:(String)->Unit, logout:()->Unit) {
+@Composable internal fun ProfileContent(name: String?, email: String?, open:(String)->Unit, logout:()->Unit) {
     Row(Modifier.fillMaxWidth(),verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(12.dp)){
         Box(Modifier.size(52.dp).rotate(-4f).background(Lime,RoundedCornerShape(17.dp)),contentAlignment=Alignment.Center){Glyph("마이")}
         Column(Modifier.weight(1f)){Label(name ?: "러너",19);Label(email ?: "첫 러닝을 기다리고 있어요",11,false,Muted)}
@@ -107,11 +107,11 @@ internal fun RecordsContent(data: RunnerData) {
     Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(19.dp)).background(Ink).clickable{open("나의 러닝 목표")}.padding(16.dp),
         verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(12.dp)){
         TileIcon("goal",Lime,Ink)
-        Column(Modifier.weight(1f)){Label("나의 러닝 목표",10,false,Color.LightGray);Label(data.goal?.let { if(it.optString("type")=="distance") km(it.getInt("targetDistanceMeters"))+" km" else PaceCalculator.formatPace(it.getInt("targetPaceSecondsPerKm")) } ?: "목표 미설정",16,true,Color.White);Label("거리 또는 페이스 목표",11,true,Lime)}
+        Column(Modifier.weight(1f)){Label("나의 러닝 목표",10,false,Color.LightGray);Label("목표 미설정",16,true,Color.White);Label("거리 또는 페이스 목표",11,true,Lime)}
         Label("›",19,false,Color.White)
     }
     Row(Modifier.fillMaxWidth(),verticalAlignment=Alignment.CenterVertically){
-        val meters=data.history.sumOf { it.getLong("distanceMeters") }; val seconds=data.history.sumOf { it.getLong("movingSeconds") }; listOf(data.history.size.toString() to "총 러닝",String.format(java.util.Locale.ROOT,"%.2f",meters/1000.0) to "누적 km",PaceCalculator.formatPace(if(meters>0)(seconds*1000/meters).toInt() else null) to "평균 페이스").forEachIndexed{i,(value,name)->
+        listOf("0" to "총 러닝","0" to "누적 km","—" to "평균 페이스").forEachIndexed{i,(value,name)->
             if(i>0)Spacer(Modifier.width(1.dp).height(35.dp).background(Line))
             Column(Modifier.weight(1f),horizontalAlignment=Alignment.CenterHorizontally){Label(value,18,true);Label(name,11,false,Muted)}
         }
@@ -132,5 +132,4 @@ internal fun RecordsContent(data: RunnerData) {
     ){ Label("로그아웃",14,true,Color(0xff9e2a2b)) }
 
 }
-
 

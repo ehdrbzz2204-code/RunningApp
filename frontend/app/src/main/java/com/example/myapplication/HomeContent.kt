@@ -23,9 +23,8 @@ import androidx.compose.ui.unit.*
 }
 
 @Composable internal fun HomeContent(
-    data: RunnerData, start: () -> Unit, records: () -> Unit, missions: () -> Unit
+    recommendation: MissionRecommendation?, start: () -> Unit, records: () -> Unit, missions: () -> Unit
 ) {
-    val recommendation=data.missions.firstOrNull()
     val shape = RoundedCornerShape(24.dp)
     Box(Modifier.fillMaxWidth().shadow(8.dp, shape, spotColor = Lime).clip(shape).background(Lime)) {
         Canvas(Modifier.matchParentSize()) {
@@ -34,22 +33,21 @@ import androidx.compose.ui.unit.*
         }
         Column(Modifier.fillMaxWidth().padding(18.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                Box(Modifier.background(Ink.copy(alpha=.07f),CircleShape).padding(horizontal=9.dp,vertical=4.dp)){Label(if(data.completed>=3)"초기 측정 완료" else "초기 체력 측정 중",11,true)}
-                Label("${data.completed} / 3",13,true)
+                Box(Modifier.background(Ink.copy(alpha=.07f),CircleShape).padding(horizontal=9.dp,vertical=4.dp)){Label("초기 체력 측정 중",11,true)}
+                Label("0 / 3",13,true)
             }
             Spacer(Modifier.height(3.dp))
             Column(verticalArrangement=Arrangement.spacedBy(3.dp)){
-                Text(when(data.completed){0->"첫 3km부터 시작해 볼까요?";3->"오늘도 가볍게 달려요";else->"초기 측정을 이어가요"},fontSize=23.sp,fontWeight=FontWeight.ExtraBold,color=Ink,letterSpacing=(-.8).sp)
-                Label(if(data.completed==3)"체력 측정을 완료했어요." else "3km 자유 주행을 세 번 마치면 맞춤 미션이 열려요.",13)
+                Text("첫 3km부터 시작해 볼까요?",fontSize=23.sp,fontWeight=FontWeight.ExtraBold,color=Ink,letterSpacing=(-.8).sp)
+                Label("3km 자유 주행을 세 번 마치면 맞춤 미션이 열려요.",13)
             }
             Column(verticalArrangement=Arrangement.spacedBy(7.dp)){
                 Box(Modifier.fillMaxWidth().height(5.dp).background(Ink.copy(alpha=.13f),CircleShape)){
-                    Spacer(Modifier.fillMaxWidth(data.completed / 3f).fillMaxHeight().background(Ink,CircleShape))
                     
                 }
                 Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.SpaceBetween){
                     (1..3).forEach { n -> Row(verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(4.dp)){
-                        Box(Modifier.size(16.dp).background(Color.Transparent,CircleShape).border(1.dp,Ink.copy(alpha=.25f),CircleShape),contentAlignment=Alignment.Center){Label(if(n<=data.completed)"✓" else n.toString(),10,true,Ink)}
+                        Box(Modifier.size(16.dp).background(Color.Transparent,CircleShape).border(1.dp,Ink.copy(alpha=.25f),CircleShape),contentAlignment=Alignment.Center){Label(n.toString(),10,true,Ink)}
                         Label("${n}회",11)
                     } }
                 }
@@ -68,7 +66,7 @@ import androidx.compose.ui.unit.*
     }
     CardBox {
         Row(Modifier.fillMaxWidth(),verticalAlignment=Alignment.CenterVertically){
-            listOf(Triple(km(data.week.getInt("totalDistanceMeters")),"km","총 거리"),Triple(data.week.getInt("runCount").toString(),"회","러닝 횟수"),Triple(PaceCalculator.formatPace(data.week.optInt("averagePaceSecondsPerKm")).substringBefore(" /km"),"/km","평균 페이스")).forEachIndexed { i,(value,unit,title) ->
+            listOf(Triple("0","km","총 거리"),Triple("0","회","러닝 횟수"),Triple("—","/km","평균 페이스")).forEachIndexed { i,(value,unit,title) ->
                 if(i>0) Spacer(Modifier.width(1.dp).height(26.dp).background(Mist))
                 Column(Modifier.weight(1f),horizontalAlignment=Alignment.CenterHorizontally){
                     Row(verticalAlignment=Alignment.Bottom){Label(value,19,true);Label(" $unit",10,false,Muted)}
@@ -76,7 +74,7 @@ import androidx.compose.ui.unit.*
                 }
             }
         }
-        if(data.week.getInt("runCount")==0) Label("첫 러닝을 마치면 주간 기록이 쌓여요.",12,false,Muted)
+        HorizontalDivider(color=Mist); Label("첫 러닝을 마치면 주간 기록이 쌓여요.",12,false,Muted)
     }
     Spacer(Modifier.height(1.dp))
     HomeHeading("맞춤 미션","나를 위한 다음 러닝")
@@ -90,9 +88,8 @@ import androidx.compose.ui.unit.*
                 drawLine(Ink,Offset(10*u,11*u),Offset(10*u,14*u),1.4f*u)
             }
         }
-        Column(Modifier.weight(1f)){Label(recommendation?.title ?: if(data.completed==3)"러닝 목표 설정하기" else "아직 미션이 잠겨 있어요",14,true);Label(recommendation?.description ?: if(data.completed==3)"목표를 정하면 추천 훈련을 확인할 수 있어요" else "체력 측정을 완료하면 맞춤 미션이 열려요",12,false,Muted)}
+        Column(Modifier.weight(1f)){Label(recommendation?.title?:"아직 미션이 잠겨 있어요",14,true);Label(recommendation?.description?:"체력 측정을 완료하면 맞춤 미션이 열려요",12,false,Muted)}
         Label("›",22)
     }
 }
-
 

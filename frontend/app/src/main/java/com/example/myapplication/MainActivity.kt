@@ -121,40 +121,21 @@ private fun AuthGate() {
     }
 }
 
-internal data class MissionRecommendation(val title: String, val description: String, val id: String = "")
+internal data class MissionRecommendation(val title: String, val description: String)
 
 @Composable
 internal fun RunningApp(
     session: SavedSession? = null,
     onLogout: () -> Unit = {},
-
+    recommendation: MissionRecommendation? = null,
 ) {
     val context = LocalContext.current
     var tab by rememberSaveable { mutableStateOf("홈") }
     var dialog by rememberSaveable { mutableStateOf<String?>(null) }
     var measuring by rememberSaveable { mutableStateOf(false) }
-    val repo = remember(session) { session?.let { RunnerRepository(context,it) } }
-    val scope = rememberCoroutineScope()
-    var data by remember(session) { mutableStateOf(repo?.cached()) }
-    var refresh by remember { mutableIntStateOf(0) }
-    var error by remember { mutableStateOf<String?>(null) }
-    var activeMission by rememberSaveable { mutableStateOf<String?>(null) }
-    var missionDetails by rememberSaveable { mutableStateOf<String?>(null) }
-    var assessmentRun by rememberSaveable { mutableStateOf(true) }
-    var starting by remember { mutableStateOf(false) }
-    LaunchedEffect(repo,refresh) {
-        if(repo==null) return@LaunchedEffect
-        do {
-            error=null
-            try {
-                repo.upload()
-                data=repo.load()
-            } catch(e:java.io.IOException) { error=e.message }
-            catch(e:org.json.JSONException) { error="서버 응답을 읽지 못했어요." }
-            if(repo.pending()==0) break
-            delay(30000)
-        } while(true)
-    }
+    var lastRun by rememberSaveable { mutableStateOf<String?>(null) }
+    var lastFinishedRun by remember { mutableStateOf<RunTrackingState?>(null) }
+
     var boundService by remember { mutableStateOf<TrackingService?>(null) }
     val serviceState by (boundService?.state ?: remember { kotlinx.coroutines.flow.MutableStateFlow(RunTrackingState()) }).collectAsState()
 
@@ -192,19 +173,9 @@ internal fun RunningApp(
         context = context,
         onPermissionGrantedStart = { title ->
             if (!serviceState.isActive) {
-                if (!starting) scope.launch {
-                    starting=true
-                    try {
-                        val offer=data?.missions?.find { it.title==title }
-                        missionDetails=offer?.let { repo?.start(it.id)?.toString() }
-                        activeMission=offer?.id
-                        assessmentRun=(data?.completed ?: 0)<3
-                        sendServiceAction(TrackingService.ACTION_START,title)
-                        measuring=true
-                    } catch(e:java.io.IOException){error=e.message}
-                    finally {starting=false}
-                }
-            } else measuring = true
+                sendServiceAction(TrackingService.ACTION_START, title)
+            }
+            measuring = true
         },
     )
 
@@ -237,7 +208,6 @@ internal fun RunningApp(
                 MeasurementScreen(
                     modifier = Modifier.padding(pad).blur(if (dialog == "러닝 종료") 4.dp else 0.dp),
                     trackingState = serviceState,
-                    mission = remember(missionDetails) { missionDetails?.let { parseMission(org.json.JSONObject(it)) } },
                     stop = { dialog = "러닝 종료" },
                     toggle = {
                         if (serviceState.isPaused) {
@@ -276,28 +246,18 @@ internal fun RunningApp(
                     if (serviceState.isActive) {
                         Action("진행 중인 러닝으로 돌아가기") { measuring = true }
                     }
-                    error?.let { Label(it); TextButton({refresh++}){Text("다시 시도")} }
-                    if(repo!=null && repo.pending()>0) Label("기기 저장 · 전송 대기 "+repo.pending()+"건")
-                    val current=data
-                    if (current==null) {
-                        if(error==null) Label("러닝 정보를 불러오는 중이에요.")
-                        Action("3km 자유 주행 시작"){startWithPermission("3km 자유 주행")}
-                        TextButton({dialog="로그아웃"}){Text("로그아웃")}
-                    } else when (tab) {
-                        "홈" -> HomeContent(current, { startWithPermission("3km 자유 주행") }, { tab="기록" }, { tab="미션" })
-                        "미션" -> {
-                            if(current.completed>=3 && current.goal==null) Action("러닝 목표 설정"){dialog="나의 러닝 목표"}
-                            else {
-                                var selected by remember(current.missions) { mutableIntStateOf(0) }
-                                if(current.missions.size>1) current.missions.forEachIndexed { i,m ->
-                                    TextButton({selected=i}){Text(m.title)}
-                                }
-                                MissionContent(current.missions.getOrNull(selected),startWithPermission,current.completed)
-                            }
-                        }
-                        "기록" -> RecordsContent(current)
+                    when (tab) {
+                        "홈" -> HomeContent(
+                            recommendation,
+                            { startWithPermission("3km 자유 주행") },
+                            { tab = "기록" },
+                            { tab = "미션" },
+                        )
+                        "미션" -> MissionContent(recommendation, startWithPermission)
+                        "기록" -> RecordsContent(lastRun)
                         "마이" -> ProfileContent(
-                            session?.name, session?.email, current,
+                            session?.name,
+                            session?.email,
                             open = { dialog = it },
                             logout = { dialog = "로그아웃" },
                         )
@@ -313,26 +273,18 @@ internal fun RunningApp(
                 dismiss = { dialog = null },
                 save = {
                     val snapshot = serviceState.copy(isActive = false, isPaused = false)
-                    if (!snapshot.clientRunId.isBlank() && serviceState.isActive && repo!=null) {
-                        try { repo.enqueue(snapshot,activeMission,assessmentRun) }
-                        catch(e:IllegalStateException){dialog=e.message;return@EndRunDialog}
-                        refresh++
-                    }
+                    lastFinishedRun = snapshot
+                    lastRun = "${clock(snapshot.elapsedMs)} · ${String.format(Locale.ROOT, "%.2fkm", snapshot.distanceMeters / 1000.0)}"
                     sendServiceAction(TrackingService.ACTION_STOP, null)
                     measuring = false
                     dialog = null
                 }
             )
-            "나의 러닝 목표" -> GoalDialog({dialog=null}) { distance,value ->
-                repo?.goal(distance,value)
-                dialog=null
-                refresh++
-            }
             "로그아웃" -> AlertDialog(
                 onDismissRequest = { dialog = null },
                 title = { Text("로그아웃") },
                 text = { Text("정말 로그아웃할까요?") },
-                confirmButton = { TextButton({ dialog = null; if(serviceState.isActive) dialog="러닝을 먼저 종료해 주세요." else onLogout() }) { Text("로그아웃") } },
+                confirmButton = { TextButton({ dialog = null; onLogout() }) { Text("로그아웃") } },
                 dismissButton = { TextButton({ dialog = null }) { Text("취소") } },
             )
             else -> AlertDialog(
@@ -346,5 +298,3 @@ internal fun RunningApp(
 }
 
 private fun clock(ms: Long) = String.format(Locale.ROOT, "%02d:%02d", ms / 60000, ms / 1000 % 60)
-
-
