@@ -28,6 +28,13 @@ import kotlinx.coroutines.launch
 import java.util.Locale
 import java.util.UUID
 
+private data class TrackerSnapshot(
+    val distanceMeters: Double,
+    val points: List<TrackPoint>,
+    val paceSecPerKm: Int?,
+    val signal: GpsSignal,
+)
+
 internal class TrackingService : Service() {
 
     inner class LocalBinder : Binder() {
@@ -48,6 +55,9 @@ internal class TrackingService : Service() {
     override fun onCreate() {
         super.onCreate()
         locationTracker = LocationTracker(applicationContext)
+        locationTracker.onPointAccepted = { point, distance ->
+            ActiveRunStore.appendPoint(applicationContext, point, distance)
+        }
         ensureChannel()
         observeTracker()
     }
@@ -63,6 +73,13 @@ internal class TrackingService : Service() {
             ACTION_PAUSE -> pauseRun()
             ACTION_RESUME -> resumeRun()
             ACTION_STOP -> stopRun()
+            ACTION_RESTORE -> {
+                val resumeAfterRestore = intent.getBooleanExtra(EXTRA_RESUME_AFTER_RESTORE, false)
+                val restored = restoreRun()
+                if (restored && resumeAfterRestore) {
+                    resumeRun()
+                }
+            }
         }
         return START_STICKY
     }
@@ -73,18 +90,24 @@ internal class TrackingService : Service() {
                 locationTracker.distanceMeters,
                 locationTracker.points,
                 locationTracker.currentPaceSecPerKm,
-            ) { dist, pts, curPace ->
-                Triple(dist, pts, curPace)
-            }.collect { (dist, pts, curPace) ->
+                locationTracker.gpsSignal,
+            ) { dist, pts, curPace, signal ->
+                TrackerSnapshot(dist, pts, curPace, signal)
+            }.collect { snap ->
                 _state.update { current ->
                     val elapsed = currentElapsedMs()
-                    val avgPace = PaceCalculator.computeAvgPaceSecPerKm(dist, elapsed)
+                    val avgPace = if (snap.signal == GpsSignal.LOST) {
+                        current.avgPaceSecPerKm
+                    } else {
+                        PaceCalculator.computeAvgPaceSecPerKm(snap.distanceMeters, elapsed)
+                    }
                     current.copy(
                         elapsedMs = elapsed,
-                        distanceMeters = dist,
-                        points = pts,
-                        currentPaceSecPerKm = if (current.isPaused) null else curPace,
+                        distanceMeters = snap.distanceMeters,
+                        points = snap.points,
+                        currentPaceSecPerKm = if (current.isPaused) null else snap.paceSecPerKm,
                         avgPaceSecPerKm = avgPace,
+                        gpsSignal = snap.signal,
                     )
                 }
             }
@@ -113,9 +136,67 @@ internal class TrackingService : Service() {
             points = emptyList(),
         )
 
+        ActiveRunStore.begin(applicationContext, runId, title)
         locationTracker.startUpdates()
         startForegroundWithNotification(buildNotification(title, isPaused = false, elapsedMs = 0L))
         startTimerLoop()
+    }
+
+    fun restoreRun(): Boolean {
+        val current = _state.value
+        if (current.isActive) {
+            startForegroundWithNotification(buildNotification(current.title, current.isPaused, current.elapsedMs))
+            return true
+        }
+        val saved = ActiveRunStore.load(applicationContext)
+        if (saved == null) {
+            startForegroundWithNotification(buildNotification("러닝", isPaused = true, elapsedMs = 0L))
+            stopForeground(STOP_FOREGROUND_REMOVE)
+            stopSelf()
+            return false
+        }
+
+        timerJob?.cancel()
+        locationTracker.stopUpdates()
+        locationTracker.restore(saved.distanceMeters, saved.points)
+
+        accumulatedMs = saved.elapsedMs
+        startedRealtimeMs = SystemClock.elapsedRealtime()
+        _state.value = RunTrackingState(
+            clientRunId = saved.clientRunId,
+            title = saved.title,
+            isActive = true,
+            isPaused = true,
+            elapsedMs = saved.elapsedMs,
+            distanceMeters = saved.distanceMeters,
+            currentPaceSecPerKm = null,
+            avgPaceSecPerKm = PaceCalculator.computeAvgPaceSecPerKm(saved.distanceMeters, saved.elapsedMs),
+            points = saved.points,
+            gpsSignal = GpsSignal.SEARCHING,
+        )
+        locationTracker.startUpdates()
+        startForegroundWithNotification(buildNotification(saved.title, isPaused = true, elapsedMs = saved.elapsedMs))
+        persistMeta()
+        return true
+    }
+
+    fun snapshotNow(): RunTrackingState {
+        val st = _state.value
+        val elapsed = currentElapsedMs()
+        return st.copy(
+            elapsedMs = elapsed,
+            avgPaceSecPerKm = if (st.gpsSignal == GpsSignal.LOST) {
+                st.avgPaceSecPerKm
+            } else {
+                PaceCalculator.computeAvgPaceSecPerKm(st.distanceMeters, elapsed)
+            },
+        )
+    }
+
+    private fun persistMeta() {
+        val st = _state.value
+        if (!st.isActive) return
+        ActiveRunStore.saveMeta(applicationContext, st.clientRunId, st.title, currentElapsedMs(), st.isPaused)
     }
 
     fun pauseRun() {
@@ -131,6 +212,7 @@ internal class TrackingService : Service() {
                 currentPaceSecPerKm = null,
             )
         }
+        persistMeta()
         updateNotification()
     }
 
@@ -140,6 +222,7 @@ internal class TrackingService : Service() {
         startedRealtimeMs = SystemClock.elapsedRealtime()
         locationTracker.setPaused(false)
         _state.update { it.copy(isPaused = false) }
+        persistMeta()
         startTimerLoop()
         updateNotification()
     }
@@ -156,6 +239,7 @@ internal class TrackingService : Service() {
                 currentPaceSecPerKm = null,
             )
         }
+        ActiveRunStore.clear(applicationContext)
         stopForeground(STOP_FOREGROUND_REMOVE)
         stopSelf()
     }
@@ -173,12 +257,19 @@ internal class TrackingService : Service() {
     private fun startTimerLoop() {
         timerJob?.cancel()
         timerJob = serviceScope.launch {
+            var tick = 0
             while (true) {
+                locationTracker.evaluateSignal()
+                if (tick++ % 8 == 0) persistMeta()
                 val elapsed = currentElapsedMs()
                 _state.update { st ->
                     st.copy(
                         elapsedMs = elapsed,
-                        avgPaceSecPerKm = PaceCalculator.computeAvgPaceSecPerKm(st.distanceMeters, elapsed),
+                        avgPaceSecPerKm = if (st.gpsSignal == GpsSignal.LOST) {
+                            st.avgPaceSecPerKm
+                        } else {
+                            PaceCalculator.computeAvgPaceSecPerKm(st.distanceMeters, elapsed)
+                        },
                     )
                 }
                 delay(250L)
@@ -262,6 +353,8 @@ internal class TrackingService : Service() {
         const val ACTION_PAUSE = "com.example.myapplication.action.PAUSE"
         const val ACTION_RESUME = "com.example.myapplication.action.RESUME"
         const val ACTION_STOP = "com.example.myapplication.action.STOP"
+        const val ACTION_RESTORE = "com.example.myapplication.action.RESTORE"
         const val EXTRA_TITLE = "com.example.myapplication.extra.TITLE"
+        const val EXTRA_RESUME_AFTER_RESTORE = "com.example.myapplication.extra.RESUME_AFTER_RESTORE"
     }
 }

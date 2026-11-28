@@ -5,11 +5,16 @@ import java.util.Locale
 import java.util.UUID
 import kotlin.math.max
 
+/** GPS 수신 상태. SEARCHING: 첫 위치를 기다리는 중 / GOOD: 정상 / WEAK: 약하거나 불안정 / LOST: 끊김(거리·페이스 계산 중단) */
+internal enum class GpsSignal { SEARCHING, GOOD, WEAK, LOST }
+
 internal data class TrackPoint(
     val lat: Double,
     val lng: Double,
     val timestampMs: Long,
     val speedMps: Float?,
+    /** 신호 끊김·일시정지로 경로가 나뉠 때마다 1씩 증가. 같은 값끼리만 선으로 이어서 그려야 해요. */
+    val segment: Int = 0,
 )
 
 internal data class RunTrackingState(
@@ -22,6 +27,7 @@ internal data class RunTrackingState(
     val currentPaceSecPerKm: Int? = null,
     val avgPaceSecPerKm: Int? = null,
     val points: List<TrackPoint> = emptyList(),
+    val gpsSignal: GpsSignal = GpsSignal.SEARCHING,
 )
 
 internal object PaceCalculator {
@@ -40,9 +46,10 @@ internal object PaceCalculator {
     }
 }
 
-internal fun Location.toTrackPoint(): TrackPoint = TrackPoint(
+internal fun Location.toTrackPoint(segment: Int = 0): TrackPoint = TrackPoint(
     lat = latitude,
     lng = longitude,
     timestampMs = time,
     speedMps = if (hasSpeed()) speed else null,
+    segment = segment,
 )

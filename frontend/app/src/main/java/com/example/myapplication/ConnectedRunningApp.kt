@@ -18,8 +18,10 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.*
 import androidx.compose.ui.unit.*
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.util.Locale
 import androidx.compose.runtime.collectAsState
 
@@ -36,7 +38,7 @@ internal fun RunningApp(
     session: SavedSession?,
     onLogout: () -> Unit,
 
-) {
+    ) {
     val context = LocalContext.current
     var tab by rememberSaveable { mutableStateOf("홈") }
     var dialog by rememberSaveable { mutableStateOf<String?>(null) }
@@ -94,7 +96,7 @@ internal fun RunningApp(
             this.action = action
             if (title != null) putExtra(TrackingService.EXTRA_TITLE, title)
         }
-        if (action == TrackingService.ACTION_START) {
+        if (action == TrackingService.ACTION_START || action == TrackingService.ACTION_RESTORE) {
             androidx.core.content.ContextCompat.startForegroundService(context, intent)
         } else {
             context.startService(intent)
@@ -119,7 +121,21 @@ internal fun RunningApp(
                 }
             } else measuring = true
         },
+        onPermissionDenied = { dialog = "위치 권한 필요" },
     )
+
+    // 앱을 다시 열었을 때, 꺼지기 전에 보관된 러닝이 있으면 선택창(이어서 달리기 / 저장하기)에 넘긴다
+    var recoverable by remember { mutableStateOf<RecoverableRun?>(null) }
+    LaunchedEffect(boundService) {
+        val service = boundService ?: return@LaunchedEffect
+        if (service.state.value.isActive) return@LaunchedEffect
+        val saved = withContext(Dispatchers.IO) { ActiveRunStore.load(context) } ?: return@LaunchedEffect
+        if (repo?.isPending(saved.clientRunId) == true) {
+            ActiveRunStore.clear(context) // 이미 저장 대기열에 들어간 기록
+            return@LaunchedEffect
+        }
+        recoverable = saved
+    }
 
     BackHandler(enabled = dialog == null && (resultJson != null || measuring || tab != "홈")) {
         if (resultJson != null) resultJson = null else if (measuring) measuring = false else tab = "홈"
@@ -158,21 +174,21 @@ internal fun RunningApp(
                         Label("남은 거리 "+km(progress.remainingMeters)+" km · 목표 "+PaceCalculator.formatPace(mission.recommendedPaceSecondsPerKm),12)
                         LinearProgressIndicator(progress={progress.progress},modifier=Modifier.fillMaxWidth(),color=Lime)
                     }
-                MeasurementScreen(
-                    modifier = Modifier.weight(1f).blur(if (dialog == "러닝 종료") 4.dp else 0.dp),
-                    trackingState = serviceState,
+                    MeasurementScreen(
+                        modifier = Modifier.weight(1f).blur(if (dialog == "러닝 종료") 4.dp else 0.dp),
+                        trackingState = serviceState,
 
-                    stop = { dialog = "러닝 종료" },
-                    toggle = {
-                        if (serviceState.isPaused) {
-                            sendServiceAction(TrackingService.ACTION_RESUME, null)
-                        } else {
-                            sendServiceAction(TrackingService.ACTION_PAUSE, null)
-                        }
-                    },
-                    reset = { recenterTick++ },
-                    recenterTrigger = recenterTick,
-                )
+                        stop = { dialog = "러닝 종료" },
+                        toggle = {
+                            if (serviceState.isPaused) {
+                                sendServiceAction(TrackingService.ACTION_RESUME, null)
+                            } else {
+                                sendServiceAction(TrackingService.ACTION_PAUSE, null)
+                            }
+                        },
+                        reset = { recenterTick++ },
+                        recenterTrigger = recenterTick,
+                    )
                 }
             }else {
                 Column(
@@ -268,7 +284,7 @@ internal fun RunningApp(
             "러닝 종료" -> EndRunDialog(
                 dismiss = { dialog = null },
                 save = {
-                    val snapshot = serviceState.copy(isActive = false, isPaused = false)
+                    val snapshot = (boundService?.snapshotNow() ?: serviceState).copy(isActive = false, isPaused = false)
                     if (!snapshot.clientRunId.isBlank() && serviceState.isActive && repo!=null) {
                         try { resultJson = repo.enqueue(snapshot,activeMission,assessmentRun) }
                         catch(e:IllegalStateException){dialog=e.message;return@EndRunDialog}
@@ -293,12 +309,52 @@ internal fun RunningApp(
                 confirmButton = { TextButton({ dialog = null; if(serviceState.isActive) dialog="러닝을 먼저 종료해 주세요." else onLogout() }) { Text("로그아웃") } },
                 dismissButton = { TextButton({ dialog = null }) { Text("취소") } },
             )
+            "위치 권한 필요" -> AlertDialog(
+                onDismissRequest = { dialog = null },
+                title = { Text("정확한 위치 권한이 필요해요") },
+                text = { Text("러닝 거리를 측정하려면 위치 권한을 '정확한 위치'로 허용해 주세요.") },
+                confirmButton = { TextButton({ dialog = null; openAppSettings(context) }) { Text("설정으로 이동") } },
+                dismissButton = { TextButton({ dialog = null }) { Text("닫기") } },
+            )
             else -> AlertDialog(
                 onDismissRequest = { dialog = null },
                 title = { Text(title) },
                 confirmButton = { TextButton({ dialog = null }) { Text("닫기") } },
             )
         }
+    }
+
+    recoverable?.let { saved ->
+        val seconds = saved.elapsedMs / 1000
+        AlertDialog(
+            onDismissRequest = {},
+            title = { Text("끝나지 않은 러닝이 있어요") },
+            text = { Text(km(saved.distanceMeters.toInt()) + " km · " + seconds / 60 + "분 " + seconds % 60 + "초 달렸어요. 이어서 달릴까요?") },
+            confirmButton = {
+                TextButton({
+                    val intent = android.content.Intent(context, TrackingService::class.java).apply {
+                        action = TrackingService.ACTION_RESTORE
+                        putExtra(TrackingService.EXTRA_RESUME_AFTER_RESTORE, true)
+                    }
+                    androidx.core.content.ContextCompat.startForegroundService(context, intent)
+                    measuring = true
+                    recoverable = null
+                }) { Text("이어서 달리기") }
+            },
+            dismissButton = {
+                TextButton({
+                    if (repo != null) {
+                        try {
+                            resultJson = repo.enqueue(saved.toTrackingState(), activeMission, assessmentRun)
+                            pendingRuns = repo.pendingRuns()
+                            refresh++
+                            ActiveRunStore.clear(context)
+                        } catch (e: IllegalStateException) { dialog = e.message }
+                    } else ActiveRunStore.clear(context)
+                    recoverable = null
+                }) { Text("저장하기") }
+            },
+        )
     }
 
 }
@@ -311,5 +367,3 @@ private fun clock(ms: Long) = String.format(Locale.ROOT, "%02d:%02d", ms / 60000
 internal fun RunningApp(recommendation: MissionRecommendation) {
     RunningApp(session = null, onLogout = {}, recommendation = recommendation)
 }
-
-

@@ -1,12 +1,14 @@
 package com.example.myapplication
 
 import android.Manifest
+import android.location.Location
 import android.annotation.SuppressLint
 import android.content.pm.PackageManager
 import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Color as AndroidColor
 import android.graphics.Paint
+import android.util.Log
 import androidx.compose.foundation.*
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.*
@@ -14,6 +16,8 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.*
 import androidx.compose.ui.graphics.*
+import androidx.compose.ui.input.pointer.PointerEventPass
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.*
 import androidx.compose.ui.unit.*
@@ -21,7 +25,10 @@ import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.core.content.ContextCompat
+import com.google.android.gms.location.CurrentLocationRequest
+import com.google.android.gms.location.FusedLocationProviderClient
 import com.google.android.gms.location.LocationServices
+import com.google.android.gms.location.Priority
 import org.maplibre.android.MapLibre
 import org.maplibre.android.camera.CameraPosition
 import org.maplibre.android.camera.CameraUpdateFactory
@@ -37,7 +44,7 @@ import org.maplibre.android.style.layers.SymbolLayer
 import org.maplibre.android.style.sources.GeoJsonSource
 import org.maplibre.geojson.Feature
 import org.maplibre.geojson.FeatureCollection
-import org.maplibre.geojson.LineString
+import org.maplibre.geojson.MultiLineString
 import org.maplibre.geojson.Point
 import java.util.Locale
 
@@ -73,14 +80,37 @@ internal fun MeasurementScreen(
     val statusText = when {
         trackingState.isPaused -> "일시정지"
         trackingState.points.isEmpty() -> "GPS 연결 중"
-        else -> "GPS 측정 중"
+        else -> when (trackingState.gpsSignal) {
+            GpsSignal.SEARCHING -> "GPS 연결 중"
+            GpsSignal.GOOD -> "GPS 측정 중"
+            GpsSignal.WEAK -> "GPS 신호 약함"
+            GpsSignal.LOST -> "GPS 신호 끊김"
+        }
+    }
+    val statusDotColor = when {
+        trackingState.isPaused -> Muted
+        trackingState.gpsSignal == GpsSignal.WEAK -> Color(0xffe0a030)
+        trackingState.gpsSignal == GpsSignal.LOST -> Color(0xffd9534f)
+        else -> Color(0xff79c75e)
     }
 
     BoxWithConstraints(modifier.fillMaxSize().background(Color(0xffe6ece5))) {
         val mapHeight = (maxHeight * .43f).coerceIn(160.dp, 420.dp)
         val panelHeight = (maxHeight - mapHeight).coerceAtLeast(0.dp)
-        Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
-            Box(Modifier.fillMaxWidth().height(mapHeight)) {
+        // 지도를 누르고 있는 동안에는 화면 전체 스크롤을 꺼서, 지도 드래그가 스크롤에 뺏겨 끊기지 않게 한다
+        var mapTouching by remember { mutableStateOf(false) }
+        Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState(), enabled = !mapTouching)) {
+            Box(
+                Modifier.fillMaxWidth().height(mapHeight).pointerInput(Unit) {
+                    awaitPointerEventScope {
+                        while (true) {
+                            // 이벤트를 소비하지 않고 눌림 상태만 관찰한다 (지도는 그대로 터치를 받는다)
+                            val event = awaitPointerEvent(PointerEventPass.Initial)
+                            mapTouching = event.changes.any { it.pressed }
+                        }
+                    }
+                },
+            ) {
                 MapLibreRunMapView(
                     modifier = Modifier.fillMaxSize(),
                     points = trackingState.points,
@@ -107,7 +137,7 @@ internal fun MeasurementScreen(
                 verticalArrangement = Arrangement.spacedBy(12.dp),
             ) {
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(5.dp)) {
-                    Spacer(Modifier.size(7.dp).background(if (trackingState.isPaused) Muted else Color(0xff79c75e), CircleShape))
+                    Spacer(Modifier.size(7.dp).background(statusDotColor, CircleShape))
                     Label(statusText, 10, true, Muted)
                 }
                 Label("현재 거리", 11, false, Muted)
@@ -172,6 +202,22 @@ private fun createCurrentLocationBitmap(): Bitmap {
     return bitmap
 }
 
+/**
+ * 캐시된 마지막 위치(lastLocation)는 예전에 있던 장소일 수 있어서 쓰지 않고,
+ * 지금 위치를 새로 측정해서 돌려준다. (10초 이내 캐시만 허용, 최대 15초 대기)
+ */
+@SuppressLint("MissingPermission")
+private fun requestFreshLocation(client: FusedLocationProviderClient, onResult: (Location) -> Unit) {
+    val request = CurrentLocationRequest.Builder()
+        .setPriority(Priority.PRIORITY_HIGH_ACCURACY)
+        .setMaxUpdateAgeMillis(10_000L)
+        .setDurationMillis(15_000L)
+        .build()
+    client.getCurrentLocation(request, null).addOnSuccessListener { loc ->
+        if (loc != null) onResult(loc)
+    }
+}
+
 @SuppressLint("MissingPermission")
 @Composable
 private fun MapLibreRunMapView(
@@ -182,6 +228,8 @@ private fun MapLibreRunMapView(
     val context = LocalContext.current
     var mapLibreMap by remember { mutableStateOf<MapLibreMap?>(null) }
     var isStyleReady by remember { mutableStateOf(false) }
+    // true면 새 위치마다 카메라가 따라간다. 사용자가 지도를 손으로 움직이면 false, 내 위치 버튼을 누르면 다시 true
+    var following by remember { mutableStateOf(true) }
     val fusedClient = remember {
         LocationServices.getFusedLocationProviderClient(context.applicationContext)
     }
@@ -199,6 +247,9 @@ private fun MapLibreRunMapView(
         MapView(context, options).apply {
             getMapAsync { map ->
                 mapLibreMap = map
+                map.addOnCameraMoveStartedListener { reason ->
+                    if (reason == MapLibreMap.OnCameraMoveStartedListener.REASON_API_GESTURE) following = false
+                }
                 map.setStyle(Style.Builder().fromUri(MAP_STYLE_URL)) { style ->
                     style.addImage(CURRENT_POS_ICON_ID, createCurrentLocationBitmap())
 
@@ -227,7 +278,7 @@ private fun MapLibreRunMapView(
         }
     }
 
-    // 스타일 준비 시 기기 현재(마지막 알려진) 위치로 초기 마커 및 카메라 이동
+    // 스타일 준비 시 기기의 현재 위치를 새로 측정해서 초기 마커 및 카메라 이동
     LaunchedEffect(mapLibreMap, isStyleReady) {
         if (!isStyleReady || points.isNotEmpty()) return@LaunchedEffect
         val map = mapLibreMap ?: return@LaunchedEffect
@@ -241,8 +292,8 @@ private fun MapLibreRunMapView(
         ) == PackageManager.PERMISSION_GRANTED
         if (!hasFine && !hasCoarse) return@LaunchedEffect
 
-        fusedClient.lastLocation.addOnSuccessListener { loc ->
-            if (loc != null && points.isEmpty()) {
+        requestFreshLocation(fusedClient) { loc ->
+            if (points.isEmpty()) {
                 val latLng = LatLng(loc.latitude, loc.longitude)
                 val posSource = map.style?.getSourceAs<GeoJsonSource>(CURRENT_POS_SOURCE_ID)
                 posSource?.setGeoJson(
@@ -255,10 +306,11 @@ private fun MapLibreRunMapView(
         }
     }
 
-    // 버튼 클릭 시 현재 위치(최신 좌표 또는 기기 마지막 위치)로 카메라 이동
+    // 버튼 클릭 시 현재 위치(최신 경로 좌표 또는 새로 측정한 위치)로 카메라 이동
     LaunchedEffect(recenterTrigger, mapLibreMap, isStyleReady) {
         if (recenterTrigger == 0 || !isStyleReady) return@LaunchedEffect
         val map = mapLibreMap ?: return@LaunchedEffect
+        following = true
 
         val latest = points.lastOrNull()
         if (latest != null) {
@@ -279,8 +331,8 @@ private fun MapLibreRunMapView(
         ) == PackageManager.PERMISSION_GRANTED
         if (!hasFine && !hasCoarse) return@LaunchedEffect
 
-        fusedClient.lastLocation.addOnSuccessListener { loc ->
-            if (loc != null) {
+        requestFreshLocation(fusedClient) { loc ->
+            run {
                 val latLng = LatLng(loc.latitude, loc.longitude)
                 val posSource = map.style?.getSourceAs<GeoJsonSource>(CURRENT_POS_SOURCE_ID)
                 posSource?.setGeoJson(
@@ -309,9 +361,11 @@ private fun MapLibreRunMapView(
         val style = map.style ?: return@LaunchedEffect
 
         val routeSource = style.getSourceAs<GeoJsonSource>(ROUTE_SOURCE_ID)
-        if (points.size >= 2) {
-            val linePoints = points.map { Point.fromLngLat(it.lng, it.lat) }
-            val feature = Feature.fromGeometry(LineString.fromLngLats(linePoints))
+        // 신호 끊김·일시정지로 나뉜 구간(segment)은 서로 이어 그리지 않는다
+        val segments = points.groupBy { it.segment }.values.filter { it.size >= 2 }
+        if (segments.isNotEmpty()) {
+            val lines = segments.map { seg -> seg.map { Point.fromLngLat(it.lng, it.lat) } }
+            val feature = Feature.fromGeometry(MultiLineString.fromLngLats(lines))
             routeSource?.setGeoJson(FeatureCollection.fromFeature(feature))
         } else {
             routeSource?.setGeoJson(FeatureCollection.fromFeatures(emptyList()))
@@ -322,10 +376,14 @@ private fun MapLibreRunMapView(
         if (latest != null) {
             val latestPoint = Point.fromLngLat(latest.lng, latest.lat)
             posSource?.setGeoJson(FeatureCollection.fromFeature(Feature.fromGeometry(latestPoint)))
-            map.animateCamera(
-                CameraUpdateFactory.newLatLngZoom(LatLng(latest.lat, latest.lng), 16.0),
-                400,
-            )
+            Log.d("RunUi", "map updated: points=${points.size}")
+            if (following) {
+                val zoom = if (points.size <= 1) 16.0 else map.cameraPosition.zoom
+                map.animateCamera(
+                    CameraUpdateFactory.newLatLngZoom(LatLng(latest.lat, latest.lng), zoom),
+                    400,
+                )
+            }
         } else {
             posSource?.setGeoJson(FeatureCollection.fromFeatures(emptyList()))
         }

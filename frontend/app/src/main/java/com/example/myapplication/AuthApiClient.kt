@@ -159,8 +159,8 @@ internal class AuthApiClient(
             val url = URL(baseUrl.trimEnd('/') + path)
             connection = (url.openConnection() as HttpURLConnection).apply {
                 requestMethod = method
-                connectTimeout = 8_000
-                readTimeout = 8_000
+                connectTimeout = 15_000
+                readTimeout = 15_000
                 setRequestProperty("Accept", "application/json")
                 if (body != null) {
                     setRequestProperty("Content-Type", "application/json; charset=utf-8")
